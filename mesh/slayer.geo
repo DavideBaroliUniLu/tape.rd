@@ -4,7 +4,7 @@ n = 7;
 size = 0.6;
 Geometry.ExtrudeSplinePoints = 15;
 
-/!/!----------------------------------------------------------------------------
+//!----------------------------------------------------------------------------
 // IMPLEMENTATION
 // A curve t -> (x(t), 0, z(t)) is roteted around x_axis to produce the domain
 // z(t) > 0

@@ -140,6 +140,70 @@ def tapered_mesh(data, geometry, mesh_params, name='test', nrefs=1):
         return 0
     return 1
 
+
+def tapered_mesh_spline(data, mesh_params, name='test', nrefs=1):
+    '''Hollow as above but here it is done via spline.'''
+    # Consistency
+    assert 'x' in data and 'z' in data and 'Z' in data
+    assert all(z > 0 for z in data['z']) and all(Z > 0 for Z in data['Z'])
+    assert len(data['x']) == len(data['z']) == len(data['Z'])
+    n = len(data['x'])
+
+    assert 'size' in mesh_params
+    assert nrefs >= 1
+
+    # Extract data for meshing
+    size = mesh_params['size']
+    if hasattr(size, '__iter__'): 
+        assert len(size) == n
+    else:
+        size = [size]*n
+
+    SIZE = mesh_params.get('SIZE', size)
+    if hasattr(SIZE, '__iter__'): 
+        assert len(SIZE) == n
+    else:
+        size = [SIZE]*n
+    
+    nsmooth = mesh_params.get('Smoothing', 1)
+    nsmooth_normals = mesh_params.get('SmoothNormals', 1)
+    nsplines = mesh_params.get('SplinePoints', 10)   # For rotation extrusion
+
+    # Build the declatations header
+    x = 'xs[] = {' + ', '.join(map(str, data['x'])) + '};'
+    z = 'zs[] = {' + ', '.join(map(str, data['z'])) + '};'
+    Z = 'Zs[] = {' + ', '.join(map(str, data['Z'])) + '};'
+    size = 'size[] = {' + ', '.join(map(str, size)) + '};'
+    SIZE = 'SIZE[] = {' + ', '.join(map(str, SIZE)) + '};'
+    nsmooth = 'Mesh.Smoothing = %d;' % nsmooth
+    nsmooth_normals = 'Mesh.SmoothNormals = %d;' % nsmooth_normals
+    nsplines = 'Geometry.ExtrudeSplinePoints = %d;' % nsplines
+    n = 'n = %d;' % n
+
+    header = '\n'.join([x, z, Z, size, SIZE, n, nsmooth, nsmooth_normals, nsplines])
+
+    # The implementation from geo
+    base = '-'.join(['hollow-spline', name])
+    geometry = 'hollow-spline.geo'
+    impl = open(geometry, 'r').readlines()
+    # Search for where the implementation starts
+    for i, line in enumerate(impl):
+        if line.startswith('//!'):
+            break
+    impl = ''.join(impl[i:])
+    body = '\n'.join([header, impl])
+    
+    # Finally dump
+    name = '.'.join([base, 'geo'])
+    with open(name, 'w') as out: out.write(body)
+
+    status = generate_gmsh_meshes(root=base, nrefs=nrefs, write_volumes=False)
+
+    if status == 0:
+        os.remove(name)
+        return 0
+    return 1
+
 # ----------------------------------------------------------------------------
 
 def _test(which=''):
@@ -247,7 +311,25 @@ def demo():
 
 if __name__ == '__main__':
     # assert _test('slayer')
+    # demo()
 
-    demo()
+    from dolfin import Mesh, HDF5File, plot, FacetFunction
+    x = [0, 1, 2, 3, 4]
+    z = [1, 1.1, 1.1, 1.0, 0.9]
+    Z = [1+0.5, 1.1+0.5, 1.1+0.5, 1.1+0.2, 1.2]
+    data = {'x': x, 'z': z, 'Z': Z}
 
+    size = [0.1]*len(x)
+    SIZE = [0.4]*len(x)
+    mesh_params = {'size': size, 'SIZE': SIZE}
+    
+    tapered_mesh_spline(data, mesh_params, name='test', nrefs=1)
 
+    mesh = Mesh()
+    h5 = HDF5File(mesh.mpi_comm(), 'HOLLOW-SPLINE-TEST/hollow-spline-test_0.h5', 'r')
+    h5.read(mesh, '/mesh', False)
+    facet_f = FacetFunction('size_t', mesh)
+    h5.read(facet_f, '/boundaries')
+    plot(facet_f, interactive=True)
+
+    shutil.rmtree('HOLLOW-SPLINE-TEST')

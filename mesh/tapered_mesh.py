@@ -38,22 +38,22 @@ def generate_gmsh_meshes(root, nrefs, write_volumes):
         h5_file = '%s_%d.h5' % (root, i)
         if not write_volumes:
             cmd = '''python -c"from dolfin import Mesh, HDF5File, MeshFunction;\
-                             mesh=Mesh('%s');\
-                             facet_f=MeshFunction('size_t', mesh, '%s');\
-                             out=HDF5File(mesh.mpi_comm(), '%s', 'w');\
-                             out.write(mesh, '/mesh');\
-                             out.write(facet_f, '/boundaries');\
-                             "''' % (xml_file, xml_facets, h5_file)
+mesh=Mesh('%s');\
+facet_f=MeshFunction('size_t', mesh, '%s');\
+out=HDF5File(mesh.mpi_comm(), '%s', 'w');\
+out.write(mesh, '/mesh');\
+out.write(facet_f, '/boundaries');\
+"''' % (xml_file, xml_facets, h5_file)
         else:
-            cmd = '''python -c"from dolfin import Mesh, HDF5File, MeshFunction;\
-                             mesh=Mesh('%s');\
-                             facet_f=MeshFunction('size_t', mesh, '%s');\
-                             cell_f=MeshFunction('size_t', mesh, '%s');
-                             out=HDF5File(mesh.mpi_comm(), '%s', 'w');\
-                             out.write(mesh, '/mesh');\
-                             out.write(facet_f, '/boundaries');\
-                             out.write(cell_f, '/volumes');\
-                             "''' % (xml_file, xml_facets, xml_volumes, h5_file)
+            cmd = r'''python -c"from dolfin import Mesh, HDF5File, MeshFunction;\
+mesh=Mesh('%s');\
+facet_f=MeshFunction('size_t', mesh, '%s');\
+cell_f=MeshFunction('size_t', mesh, '%s');
+out=HDF5File(mesh.mpi_comm(), '%s', 'w');\
+out.write(mesh, '/mesh');\
+out.write(facet_f, '/boundaries');\
+out.write(cell_f, '/volumes');\
+"''' % (xml_file, xml_facets, xml_volumes, h5_file)
         
         subprocess.call([cmd], shell=True)
         # Success?
@@ -85,6 +85,7 @@ def tapered_mesh(data, geometry, mesh_params, name='test', nrefs=1):
     assert all(z > 0 for z in data['z'])
     assert len(data['x']) == len(data['z'])
     n = len(data['x'])
+    write_volumes = geometry == 'dlayer'
 
     single = True
     if geometry != 'slayer':
@@ -99,6 +100,7 @@ def tapered_mesh(data, geometry, mesh_params, name='test', nrefs=1):
 
     # Extract data for meshing
     size = mesh_params['size']
+    SIZE = mesh_params.get('SIZE', size)
     nsmooth = mesh_params.get('Smoothing', 1)
     nsmooth_normals = mesh_params.get('SmoothNormals', 1)
     nsplines = mesh_params.get('SplinePoints', 10)   # For rotation extrusion
@@ -111,6 +113,7 @@ def tapered_mesh(data, geometry, mesh_params, name='test', nrefs=1):
     nsmooth_normals = 'Mesh.SmoothNormals = %d;' % nsmooth_normals
     nsplines = 'Geometry.ExtrudeSplinePoints = %d;' % nsplines
     size = 'size = %g;' % size
+    SIZE = 'SIZE = %g;' % SIZE
     n = 'n = %d;' % n
 
     header = '\n'.join([x, z, Z, n, nsmooth, nsmooth_normals, nsplines, size])
@@ -130,7 +133,6 @@ def tapered_mesh(data, geometry, mesh_params, name='test', nrefs=1):
     name = '.'.join([base, 'geo'])
     with open(name, 'w') as out: out.write(body)
 
-    write_volumes = geometry == 'dlayer'
     status = generate_gmsh_meshes(root=base, nrefs=nrefs, write_volumes=write_volumes)
 
     if status == 0:
@@ -140,13 +142,112 @@ def tapered_mesh(data, geometry, mesh_params, name='test', nrefs=1):
 
 # ----------------------------------------------------------------------------
 
-if __name__ == '__main__':
-    x = [0, 1, 2, 3]
-    z = [1, 1.1, 1.1, 1.0]
-    Z = [1+0.5, 1.1+0.5, 1.1+0.5, 1.1+0.2]
+def _test(which=''):
+    '''Check meshgen.'''
+    assert which in ('', 'slayer', 'dlayer', 'hollow')
+
+    if which == '':
+        options = [True]*3
+    else:
+        options = [k == which for k in ['slayer', 'dlayer', 'hollow']]
+    slayer, dlayer, hollow = options
+
+    from dolfin import Mesh, HDF5File, FacetFunction, SubsetIterator, CellFunction
+    x = [0, 1, 2, 3, 4]
+    z = [1, 1.1, 1.1, 1.0, 0.9]
+    Z = [1+0.5, 1.1+0.5, 1.1+0.5, 1.1+0.2, 1.2]
+    data = {'x': x, 'z': z, 'Z': Z}
+
+    # SLAYER
+    if slayer:
+        tapered_mesh(data=data,
+                     geometry='slayer',
+                     name='test1',
+                     mesh_params={'size': 0.4},
+                     nrefs=1)
+        
+        mesh = Mesh()
+        h5 = HDF5File(mesh.mpi_comm(), 'SLAYER-TEST1/slayer-test1_0.h5', 'r')
+        h5.read(mesh, '/mesh', False)
+        facet_f = FacetFunction('size_t', mesh)
+        h5.read(facet_f, '/boundaries')
+        assert all(any(1 for f in SubsetIterator(facet_f, bdry)) for bdry in (1, 2, 3))
+        shutil.rmtree('SLAYER-TEST1')
+
+    if dlayer:
+        tapered_mesh(data=data,
+                     geometry='dlayer',
+                     name='test1',
+                     mesh_params={'size': 0.4},
+                     nrefs=1)
+        
+        mesh = Mesh()
+        h5 = HDF5File(mesh.mpi_comm(), 'DLAYER-TEST1/dlayer-test1_0.h5', 'r')
+        h5.read(mesh, '/mesh', False)
+        facet_f = FacetFunction('size_t', mesh)
+        h5.read(facet_f, '/boundaries')
+        assert all(any(1 for f in SubsetIterator(facet_f, bdry)) for bdry in range(1, 7))
+        cell_f = CellFunction('size_t', mesh)
+        h5.read(cell_f, '/volumes')
+        ones = [1 for f in SubsetIterator(cell_f, 1)]
+        twos = [1 for f in SubsetIterator(cell_f, 2)]
+        assert len(ones) and len(twos)
+        assert (len(ones) + len(twos)) == mesh.num_cells()
+        shutil.rmtree('DLAYER-TEST1')
+
+    if hollow:
+        tapered_mesh(data=data,
+                     geometry='hollow',
+                     name='test1',
+                     mesh_params={'size': 0.4},
+                     nrefs=1)
+        
+        mesh = Mesh()
+        h5 = HDF5File(mesh.mpi_comm(), 'HOLLOW-TEST1/hollow-test1_0.h5', 'r')
+        h5.read(mesh, '/mesh', False)
+        facet_f = FacetFunction('size_t', mesh)
+        h5.read(facet_f, '/boundaries')
+        assert all(any(1 for f in SubsetIterator(facet_f, bdry)) for bdry in range(1, 5))
+        shutil.rmtree('HOLLOW-TEST1')
+
+    return True
+
+
+def demo():
+    '''Showcase ablilities'''
+    from math import sin, pi
+    from dolfin import Mesh, HDF5File, plot, FacetFunction
+
+    outer = lambda x: 1 + 0.1*sin(2*pi*x)
+    inner = lambda x: 0.2*(x-0.5)*(x-0.5) + 0.2
+    
+    x = [0.1*i for i in range(11)]
+    z = map(inner, x)
+    Z = map(outer, x)
+
     data = {'x': x, 'z': z, 'Z': Z}
 
     tapered_mesh(data=data,
                  geometry='hollow',
-                 mesh_params={'size': 0.4},
-                 nrefs=2)
+                 name='demo',
+                 mesh_params={'size': 0.1, 'SIZE': 0.3, 'nsplines': 20},
+                 nrefs=1)
+
+    mesh = Mesh()
+    h5 = HDF5File(mesh.mpi_comm(), 'HOLLOW-DEMO/hollow-demo_0.h5', 'r')
+    h5.read(mesh, '/mesh', False)
+    facet_f = FacetFunction('size_t', mesh)
+    h5.read(facet_f, '/boundaries')
+    plot(facet_f, interactive=True)
+
+    shutil.rmtree('HOLLOW-DEMO')
+
+# ----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+
+if __name__ == '__main__':
+    # assert _test('slayer')
+
+    demo()
+
+

@@ -3,6 +3,7 @@ zs[] = {1, 1.1, 1.1, 1.0};
 Zs[] = {1+0.5, 1.1+0.5, 1.1+0.5, 1.1+0.2};
 n = 4;
 size = 0.6;
+SIZE = 0.2;
 Geometry.ExtrudeSplinePoints = 15;
 
 //!----------------------------------------------------------------------------
@@ -29,7 +30,7 @@ EndFor
 // Exterior points
 P = newp;
 For i In {0:n-1}
-  Point(P+i) = {xs[i], 0, Zs[i], size};
+  Point(P+i) = {xs[i], 0, Zs[i], SIZE};
 EndFor
 
 // Exterior Lines

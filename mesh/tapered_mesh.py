@@ -87,6 +87,10 @@ def tapered_mesh(data, geometry, mesh_params, name='test', nrefs=1):
     n = len(data['x'])
     write_volumes = geometry == 'dlayer'
 
+    # x must be increasing
+    x = data['x'] 
+    assert all(x0 < x1 for x0, x1 in zip(x[:-1], x[1:]))
+
     single = True
     if geometry != 'slayer':
         assert 'Z' in data
@@ -148,6 +152,10 @@ def tapered_mesh_spline(data, mesh_params, name='test', nrefs=1):
     assert all(z > 0 for z in data['z']) and all(Z > 0 for Z in data['Z'])
     assert len(data['x']) == len(data['z']) == len(data['Z'])
     n = len(data['x'])
+
+    # x must be increasing
+    x = data['x'] 
+    assert all(x0 < x1 for x0, x1 in zip(x[:-1], x[1:]))
 
     assert 'size' in mesh_params
     assert nrefs >= 1
@@ -313,7 +321,10 @@ if __name__ == '__main__':
     # assert _test('slayer')
     # demo()
 
-    from dolfin import Mesh, HDF5File, plot, FacetFunction
+    from dolfin import Mesh, HDF5File, plot, FacetFunction, SubsetIterator
+    from dolfin import near
+    import numpy as np
+
     x = [0, 1, 2, 3, 4]
     z = [1, 1.1, 1.1, 1.0, 0.9]
     Z = [1+0.5, 1.1+0.5, 1.1+0.5, 1.1+0.2, 1.2]
@@ -330,6 +341,20 @@ if __name__ == '__main__':
     h5.read(mesh, '/mesh', False)
     facet_f = FacetFunction('size_t', mesh)
     h5.read(facet_f, '/boundaries')
+
+    X = mesh.coordinates().reshape((-1, 3))
+    mins = np.min(X, axis=0)
+    maxs = np.max(X, axis=0)
+    print mins
+    print maxs
+    assert near(mins[0], min(x), 1E-8) and near(maxs[0], max(x), 1E-8)
+    assert maxs[2] < 1.1*max(Z)
+    assert maxs[1] < 1.1*max(Z)
+    assert near(-mins[1], maxs[1]) and near(-mins[2], maxs[2])
+
+    assert all(any(1 for f in SubsetIterator(facet_f, bdry)) for bdry in range(1, 5))
+
     plot(facet_f, interactive=True)
 
     shutil.rmtree('HOLLOW-SPLINE-TEST')
+

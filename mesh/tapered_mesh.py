@@ -104,7 +104,17 @@ def tapered_mesh(data, geometry, mesh_params, name='test', nrefs=1):
 
     # Extract data for meshing
     size = mesh_params['size']
+    if hasattr(size, '__iter__'): 
+        assert len(size) == n
+    else:
+        size = [size]*n
+
     SIZE = mesh_params.get('SIZE', size)
+    if hasattr(SIZE, '__iter__'): 
+        assert len(SIZE) == n
+    else:
+        SIZE = [SIZE]*n
+
     nsmooth = mesh_params.get('Smoothing', 1)
     nsmooth_normals = mesh_params.get('SmoothNormals', 1)
     nsplines = mesh_params.get('SplinePoints', 10)   # For rotation extrusion
@@ -116,8 +126,8 @@ def tapered_mesh(data, geometry, mesh_params, name='test', nrefs=1):
     nsmooth = 'Mesh.Smoothing = %d;' % nsmooth
     nsmooth_normals = 'Mesh.SmoothNormals = %d;' % nsmooth_normals
     nsplines = 'Geometry.ExtrudeSplinePoints = %d;' % nsplines
-    size = 'size = %g;' % size
-    SIZE = 'SIZE = %g;' % SIZE
+    size = 'size[] = {' + ', '.join(map(str, size)) + '};'
+    SIZE = 'SIZE[] = {' + ', '.join(map(str, SIZE)) + '};'
     n = 'n = %d;' % n
 
     header = '\n'.join([x, z, Z, n, nsmooth, nsmooth_normals, nsplines, size])
@@ -171,7 +181,7 @@ def tapered_mesh_spline(data, mesh_params, name='test', nrefs=1):
     if hasattr(SIZE, '__iter__'): 
         assert len(SIZE) == n
     else:
-        size = [SIZE]*n
+        SIZE = [SIZE]*n
     
     nsmooth = mesh_params.get('Smoothing', 1)
     nsmooth_normals = mesh_params.get('SmoothNormals', 1)
@@ -325,14 +335,15 @@ if __name__ == '__main__':
     from dolfin import near
     import numpy as np
 
-    x = [0, 1, 2, 3, 4]
-    z = [1, 1.1, 1.1, 1.0, 0.9]
-    Z = [1+0.5, 1.1+0.5, 1.1+0.5, 1.1+0.2, 1.2]
+    x = np.array([0.3*i for i in range(21)])
+    z = np.ones_like(x)
+    Z = 2*np.ones_like(x)
+
     data = {'x': x, 'z': z, 'Z': Z}
 
     size = [0.1]*len(x)
-    SIZE = [0.4]*len(x)
-    mesh_params = {'size': size, 'SIZE': SIZE}
+    SIZE = [0.2]*len(x)
+    # mesh_params = {'size': size, 'SIZE': SIZE}
     
     tapered_mesh_spline(data, mesh_params, name='test', nrefs=1)
 
@@ -350,7 +361,7 @@ if __name__ == '__main__':
     assert near(mins[0], min(x), 1E-8) and near(maxs[0], max(x), 1E-8)
     assert maxs[2] < 1.1*max(Z)
     assert maxs[1] < 1.1*max(Z)
-    assert near(-mins[1], maxs[1]) and near(-mins[2], maxs[2])
+    assert near(-mins[1], maxs[1], 1E-8) and near(-mins[2], maxs[2], 1E-8)
 
     assert all(any(1 for f in SubsetIterator(facet_f, bdry)) for bdry in range(1, 5))
 

@@ -1,7 +1,7 @@
 xs[] = {0, 1, 2, 3, 4, 5, 6, 7};
 zs[] = {1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7};
+size[] = {0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6};
 n = 7;
-size = 0.6;
 Geometry.ExtrudeSplinePoints = 15;
 
 //!----------------------------------------------------------------------------
@@ -14,7 +14,7 @@ Geometry.ExtrudeSplinePoints = 15;
 p = newp;
 For i In {0:n-1}
   P[i] = p+i;
-  Point(P[i]) = {xs[i], 0, zs[i], size};
+  Point(P[i]) = {xs[i], 0, zs[i], size[i]};
 EndFor
 
 // Lines

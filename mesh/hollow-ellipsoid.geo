@@ -126,19 +126,19 @@ EndFor
 p = newp;
 For i In {0:n-1}
   CA[i] = p + 2*i;
-  Point(CA[i]) = {xs[i], 0, As[i], size[i]};
+  Point(CA[i]) = {xs[i], 0, As[i], SIZE[i]};
 
   AC[i] = p + 2*i + 1;
-  Point(AC[i]) = {xs[i], 0, -As[i], size[i]};
+  Point(AC[i]) = {xs[i], 0, -As[i], SIZE[i]};
 EndFor
 // Other axis
 p = newp;
 For i In {0:n-1}
   CB[i] = p + 2*i;
-  Point(CB[i]) = {xs[i], -Bs[i], 0, size[i]};
+  Point(CB[i]) = {xs[i], -Bs[i], 0, SIZE[i]};
 
   BC[i] = p + 2*i + 1;
-  Point(BC[i]) = {xs[i], Bs[i], 0, size[i]};
+  Point(BC[i]) = {xs[i], Bs[i], 0, SIZE[i]};
 EndFor
 
 // Straight connections between points

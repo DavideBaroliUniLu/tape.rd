@@ -166,6 +166,8 @@ def tapered_mesh_spline(data, mesh_params, name='test', nrefs=1):
     # x must be increasing
     x = data['x'] 
     assert all(x0 < x1 for x0, x1 in zip(x[:-1], x[1:]))
+    # Majorization
+    assert all(z < Z for z, Z in zip(data['z'], data['Z']))
 
     assert 'size' in mesh_params
     assert nrefs >= 1
@@ -203,6 +205,81 @@ def tapered_mesh_spline(data, mesh_params, name='test', nrefs=1):
     # The implementation from geo
     base = '-'.join(['hollow-spline', name])
     geometry = 'hollow-spline.geo'
+    impl = open(geometry, 'r').readlines()
+    # Search for where the implementation starts
+    for i, line in enumerate(impl):
+        if line.startswith('//!'):
+            break
+    impl = ''.join(impl[i:])
+    body = '\n'.join([header, impl])
+    
+    # Finally dump
+    name = '.'.join([base, 'geo'])
+    with open(name, 'w') as out: out.write(body)
+
+    status = generate_gmsh_meshes(root=base, nrefs=nrefs, write_volumes=False)
+
+    if status == 0:
+        os.remove(name)
+        return 0
+    return 1
+
+
+def tapered_mesh_ellipse(data, mesh_params, name='test', nrefs=1):
+    '''Ellipse mesh'''
+    # Consistency
+    keys = ('x', 'a', 'b', 'A', 'B')
+    assert all(k in data for k in keys)
+    assert all(value > 0 for k in keys[1:] for value in data[k])
+    assert len(set(map(len, data.values()))) == 1
+    n = len(data['x'])
+
+    # x must be increasing
+    x = data['x'] 
+    assert all(x0 < x1 for x0, x1 in zip(x[:-1], x[1:]))
+    # Majorization
+    assert all(v < V for v, V in zip(data['a'], data['A']))
+    assert all(v < V for v, V in zip(data['b'], data['B']))
+
+    assert 'size' in mesh_params
+    assert nrefs >= 1
+
+    # Extract data for meshing
+    size = mesh_params['size']
+    if hasattr(size, '__iter__'): 
+        assert len(size) == n
+    else:
+        size = [size]*n
+
+    SIZE = mesh_params.get('SIZE', size)
+    if hasattr(SIZE, '__iter__'): 
+        assert len(SIZE) == n
+    else:
+        SIZE = [SIZE]*n
+    
+    nsmooth = mesh_params.get('Smoothing', 1)
+    nsmooth_normals = mesh_params.get('SmoothNormals', 1)
+    nsplines = mesh_params.get('SplinePoints', 10)   # For rotation extrusion
+
+    # Build the declatations header
+    x = 'xs[] = {' + ', '.join(map(str, data['x'])) + '};'
+    a = 'as[] = {' + ', '.join(map(str, data['a'])) + '};'
+    b = 'bs[] = {' + ', '.join(map(str, data['b'])) + '};'
+    A = 'As[] = {' + ', '.join(map(str, data['A'])) + '};'
+    B = 'Bs[] = {' + ', '.join(map(str, data['B'])) + '};'
+    size = 'size[] = {' + ', '.join(map(str, size)) + '};'
+    SIZE = 'SIZE[] = {' + ', '.join(map(str, SIZE)) + '};'
+    nsmooth = 'Mesh.Smoothing = %d;' % nsmooth
+    nsmooth_normals = 'Mesh.SmoothNormals = %d;' % nsmooth_normals
+    nsplines = 'Geometry.ExtrudeSplinePoints = %d;' % nsplines
+    n = 'n = %d;' % n
+
+    header = '\n'.join([x, a, b, A, B, size, SIZE, 
+                        n, nsmooth, nsmooth_normals, nsplines])
+
+    # The implementation from geo
+    base = '-'.join(['hollow-ellipsoid', name])
+    geometry = 'hollow-ellipsoid.geo'
     impl = open(geometry, 'r').readlines()
     # Search for where the implementation starts
     for i, line in enumerate(impl):

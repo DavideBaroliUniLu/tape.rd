@@ -4,37 +4,37 @@ import os
 
 # Here the first list are AP(left-right) and T(up-down) diameters of spinal chord, 
 # the second is then data for spinal chanal (which is surrouns the chord. The data
-# is in mm
+# is in cm
 
-healthy = [[(9.3, 11.3),
-            (8.8, 12.4),
-            (8.6, 13.2),
-            (8.7, 14.0),
-            (8.3, 13.9),
-            (7.9, 13.2),
-            (7.4, 11.4)],  
-           [(15.6, 27.7),
-            (14.3, 25.5),
-            (12.6, 22.4),
-            (12.5, 22.3),
-            (12.6, 22.4),
-            (12.6, 22.4),
-            (12.9, 23.0)]]
+healthy = [[(0.93, 1.13),
+            (0.88, 1.24),
+            (0.86, 1.32),
+            (0.87, 1.40),
+            (0.83, 1.39),
+            (0.79, 1.32),
+            (0.74, 1.14)],  
+           [(1.56, 2.77),
+            (1.43, 2.55),
+            (1.26, 2.24),
+            (1.25, 2.23),
+            (1.26, 2.24),
+            (1.26, 2.24),
+            (1.29, 2.30)]]
 
-abnormal = [[(9.3, 11.3),
-             (8.8, 12.4),
-             (8.6, 13.2),
-             (8.7, 14.0),
-             (8.3, 13.9),
-             (7.9, 13.2),
-             (7.4, 11.4)],  
-            [(15.6, 27.7),
-             (14.3, 25.5),
-             (12.6, 22.4),
-             (12.5, 22.3),
-             (15.5, 27.6),
-             (18.5, 32.9),
-             (21.5, 38.3)]]
+abnormal = [[(0.93, 1.13),
+             (0.88, 1.24),
+             (0.86, 1.32),
+             (0.87, 1.40),
+             (0.83, 1.39),
+             (0.79, 1.32),
+             (0.74, 1.14)],  
+            [(1.56, 2.77),
+             (1.43, 2.55),
+             (1.26, 2.24),
+             (1.25, 2.23),
+             (1.55, 2.76),
+             (1.85, 3.29),
+             (2.15, 3.83)]]
 
 
 def process_series_rot(data, diameter, fit, lstsq=False):
@@ -77,13 +77,13 @@ def process_series_rot(data, diameter, fit, lstsq=False):
     # It remains to get x
     # We do this by either making the last C flat
     if fit == 'first':
-        x = [i*10 for i in range(len(chord)+1)]
+        x = [i*1 for i in range(len(chord)+1)]
         chord.append(chord[-1])
         canal.append(canal[-1]) 
     # or flatten first and last
     if fit == 'mid':
-        x = [0] + [5+i*10 for i in range(len(chord))]
-        x.append(x[-1]+5)
+        x = [0] + [0.5+i*1 for i in range(len(chord))]
+        x.append(x[-1]+0.5)
         chord.append(chord[-1])
         chord = [chord[0]] + chord
 
@@ -145,7 +145,7 @@ def process_series_ellipse(data, fit, lstsq=False):
     # It remains to get x
     # We do this by either making the last C flat
     if fit == 'first':
-        x = [i*10 for i in range(len(chord)+1)]
+        x = [i*1 for i in range(len(chord)+1)]
 
         chord0.append(chord0[-1])
         chord1.append(chord1[-1])
@@ -154,8 +154,8 @@ def process_series_ellipse(data, fit, lstsq=False):
         canal1.append(canal1[-1])
     # or flatten first and last
     if fit == 'mid':
-        x = [0] + [5+i*10 for i in range(len(chord))]
-        x.append(x[-1]+5)
+        x = [0] + [0.5+i*1 for i in range(len(chord))]
+        x.append(x[-1]+0.5)
 
         chord0.append(chord0[-1])
         chord0 = [chord0[0]] + chord0
@@ -250,37 +250,49 @@ if __name__ == '__main__':
         shutil.rmtree('HOLLOW-DEMO')
 
     elif cc == 'ellipse':
-        data = process_series_ellipse(data=healthy, fit='mid', lstsq=False)
+        for kind, data in (('healty', healthy), ('abnormal', abnormal)):
+            data = process_series_ellipse(data=data, fit='mid', lstsq=False)
 
-        x, a, b, A, B = data['x'], data['a'], data['b'], data['A'], data['B']
-        plt.figure()
-        plt.plot(x, a, 'rx')
-        plt.plot(x, b, 'ro')
-        plt.plot(x, A, 'bx')
-        plt.plot(x, B, 'bo')
-        plt.show()
+            x, a, b, A, B = data['x'], data['a'], data['b'], data['A'], data['B']
+            plt.figure()
+            plt.plot(x, a, 'rx')
+            plt.plot(x, b, 'ro')
+            plt.plot(x, A, 'bx')
+            plt.plot(x, B, 'bo')
+            plt.show()
 
-        size = [0.5]*len(data['x'])
-        SIZE = [0.6]*len(data['x'])
-        mesh_params = {'size': size, 
-                       'SIZE': SIZE,
-                       'nsplines': 30,
-                       'nsmooth': 5,
-                       'nsmooth_normals': 5}
+            size = [0.05]*len(data['x'])
+            SIZE = [0.1]*len(data['x'])
+            mesh_params = {'size': size, 
+                           'SIZE': SIZE,
+                           'nsplines': 30,
+                           'nsmooth': 5,
+                           'nsmooth_normals': 5}
 
-        tapered_mesh_ellipse(data=data,
-                             name='demo-%s' % cc,
-                             mesh_params=mesh_params,
-                             nrefs=1)
-        
-        folder = 'HOLLOW-ELLIPSOID-DEMO-ELLIPSE'
-        name = 'hollow-ellipsoid-demo-ellipse_0.h5'
+            tapered_mesh_ellipse(data=data,
+                                 name=kind,
+                                 mesh_params=mesh_params,
+                                 nrefs=1)
+            
+            folder = 'HOLLOW-ELLIPSOID-%s' % kind.upper()
+            name = 'hollow-ellipsoid-%s_0.h5' % kind
 
-        mesh = Mesh()
-        h5 = HDF5File(mesh.mpi_comm(), os.path.join(folder, name), 'r')
-        h5.read(mesh, '/mesh', False)
-        facet_f = FacetFunction('size_t', mesh)
-        h5.read(facet_f, '/boundaries')
-        plot(facet_f, interactive=True)
+            mesh = Mesh()
+            h5 = HDF5File(mesh.mpi_comm(), os.path.join(folder, name), 'r')
+            h5.read(mesh, '/mesh', False)
+            facet_f = FacetFunction('size_t', mesh)
+            h5.read(facet_f, '/boundaries')
 
-        shutil.rmtree(folder)
+            from dolfin import BoundaryMesh, XDMFFile, CellFunction, plot, cells
+            bmesh = BoundaryMesh(mesh, 'exterior')
+            c2f = bmesh.entity_map(2)
+
+            cell_f = CellFunction('size_t', bmesh, 0)
+            for cell in cells(bmesh): cell_f[cell] = facet_f[c2f[int(cell.index())]]
+
+            plot(cell_f, interactive=True)
+
+            out = XDMFFile(mesh.mpi_comm(), '%s.xdmf' % kind)
+            out.write(cell_f, XDMFFile.Encoding_HDF5)
+
+            # shutil.rmtree(folder)

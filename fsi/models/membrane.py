@@ -96,12 +96,7 @@ class SolidMembrane(SolidModelBase):
         bcs = [DirichletBC(V, value, bdry, tag) for (value, bdry, tag) in bcs]
 
         A, b = PETScMatrix(), PETScVector()
-        if tol < 0:
-            solver = PETScLUSolver('mumps')
-        else:
-            solver = PETScKrylovSolver('gmres', 'hypre_euclid')
-            solver.parameters['relative_tolerance'] = tol
-            solver.parameters['absolute_tolerance'] = tol
+        solver = PETScKrylovSolver('gmres', 'hypre_euclid')
 
         # What we need to remember
         # Scalar solutions

@@ -19,7 +19,7 @@ class BoundaryProlongator(object):
     Set function f in V(domain) such that it matches fb in Vb(boundary) on
     boundary.
     '''
-    def __init__(self, Vb, bmesh, V, tol=__TOL__):
+    def __init__(self, Vb, bmesh, V):
         '''Precompute the maps. Compatibility of Vb, V in Oywind's code.'''
         local_dofmapping = d_boundarymesh_to_mesh_dofmap(bmesh, Vb, V)
         _keys, _values = zip(*local_dofmapping.iteritems())
@@ -28,10 +28,6 @@ class BoundaryProlongator(object):
 
         self.Vb = Vb
         self.V = V
-        if tol > __TOL__:
-            print 'Boundary->Domain should be more accurate using %g' % __TOL__
-            tol = __TOL__
-        self.tol = tol
 
     def map(self, fb, f):
         '''Map fb to f'''
@@ -72,15 +68,10 @@ class BoundaryProlongator(object):
                 M.ident_zeros()  
                 # Otherwise singular mat. NOTE: breaks symmetry - so bicgstab
                 # FIXME: petsc has zeroRowsColums that could help here
-                if self.tol < 0:
-                    solver = PETScLUSolver('mumps')
-                    solver.set_operator(M)
-                    solver.parameters['reuse_factorization'] = True
-                else:
-                    solver = KrylovSolver('bicgstab', 'hypre_amg')
-                    solver.set_operators(M, M)
-                    solver.parameters['relative_tolerance'] = self.tol
-                    solver.parameters['absolute_tolerance'] = self.tol
+                solver = KrylovSolver('bicgstab', 'hypre_amg')
+                solver.set_operators(M, M)
+                solver.parameters['relative_tolerance'] = __TOL__
+                solver.parameters['absolute_tolerance'] = __TOL__
                 self.solver = solver
 
             niters = self.solver.solve(f.vector(), self.x) 
@@ -93,7 +84,7 @@ class BoundaryRestrictor(object):
     Set function fb in Vb(boundary) to be a boundary restriction of f in
     V(domain)
     '''
-    def __init__(self, V, bmesh, Vb, tol=__TOL__):
+    def __init__(self, V, bmesh, Vb):
         '''Precompute the maps. Compatibility of Vb, V in Oywind's code.'''
         local_dofmapping = d_mesh_to_boundarymesh_dofmap(bmesh, V, Vb)
         self._keys = np.array(local_dofmapping.keys(), dtype=np.intc)
@@ -102,10 +93,6 @@ class BoundaryRestrictor(object):
 
         self.Vb = Vb
         self.V = V
-        if tol > __TOL__:
-            print 'Domain->Boundary should be more accurate using %g' % __TOL__
-            tol = __TOL__
-        self.tol = tol
 
     def map(self, f, fb):
         '''Map f to fb'''
@@ -143,16 +130,10 @@ class BoundaryRestrictor(object):
                 u = TrialFunction(self.Vb)
                 v = TestFunction(self.Vb)
                 M = assemble(inner(u, v)*dx)
-
-                if self.tol < 0:
-                    solver = PETScLUSolver('mumps')
-                    solver.set_operator(M)
-                    solver.parameters['reuse_factorization'] = True
-                else:
-                    solver = KrylovSolver('cg', 'hypre_amg')
-                    solver.set_operators(M, M)
-                    solver.parameters['relative_tolerance'] = self.tol
-                    solver.parameters['absolute_tolerance'] = self.tol
+                solver = KrylovSolver('cg', 'hypre_amg')
+                solver.set_operators(M, M)
+                solver.parameters['relative_tolerance'] = __TOL__
+                solver.parameters['absolute_tolerance'] = __TOL__
                 self.solver = solver
 
             niters = self.solver.solve(fb.vector(), self.x) 
@@ -276,7 +257,7 @@ if __name__ == '__main__':
         comm = mesh.mpi_comm().tompi4py()
 
         # Check prolongation
-        P = BoundaryProlongator(Vb, emap, V, -1)
+        P = BoundaryProlongator(Vb, emap, V)
         # Foo to foo
         fb = Function(Vb)
         fb.vector().set_local(np.random.rand(fb.vector().local_size()))

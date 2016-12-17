@@ -116,7 +116,7 @@ def py_SubMesh(mesh, markers, marker):
     global_cell_distribution = comm.allgather(len(base_cell_indices))
     have_marked_cells = sum(global_cell_distribution) 
     assert have_marked_cells
-    assert all(count > 0 for count in global_cell_distribution), 'Every process needs to have a piece of mesh!'
+    assert all(count > 0 for count in global_cell_distribution)
 
     # Get local
     topology = mesh.topology()

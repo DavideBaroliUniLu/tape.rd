@@ -15,7 +15,6 @@ class FSI_Decoupled(NSScheme):
                 p_degree = 1,
                 r = 2, # Extrapolation degree of velocity
                 s = 1, # Extrapolation degree of pressure and displacement
-                tol = 1E-8       # Abs/rel tolerance for Krylov solvers
                 )
         return params
 
@@ -45,12 +44,11 @@ class FSI_Decoupled(NSScheme):
         D = spaces.spacepool.get_custom_space("CG", 1, (dim,))  # For mesh displ.
         Dgb = VectorFunctionSpace(bmesh, 'CG', 1)                # For solid displ.
 
-        tolerance = self.params.tol
         # Operators for transfering data
         # Computing normal as a function in Dgb/computing traction
-        D_to_Dgb = BoundaryRestrictor(D, emap, Dgb, tol=tolerance)
+        D_to_Dgb = BoundaryRestrictor(D, emap, Dgb)
         # Prolongating displacement to D
-        Dgb_to_D = BoundaryProlongator(Dgb, emap, D, tol=tolerance)
+        Dgb_to_D = BoundaryProlongator(Dgb, emap, D)
         # Get the normal
         nDgb = Function(Dgb)
         D_to_Dgb.map(n, nDgb)
@@ -81,7 +79,7 @@ class FSI_Decoupled(NSScheme):
         w = Function(D)
 
         traction = Function(Dgb)                       # Fluid -> Solid
-        ExternalForcing = problem.ExternalForcing
+        ExternalPressure = problem.ExternalPressure    # Extra to solid from outside
 
         # Get functions for data assimilation
         observations = problem.observations(spaces, t)
@@ -118,24 +116,21 @@ class FSI_Decoupled(NSScheme):
         # ALE matches solid on FSI and 'inherits' solid Dirichlet bcs
         bcs_ale = [DirichletBC(D, DF, problem.facet_domains, fsi_tag)
                    for fsi_tag in problem.Epsilon]
-
         bcs_ale.extend([DirichletBC(D, value, problem.facet_domains, tag)
                         for value, tag in bcs.solid])
-        # Setup absorbing bcs - they are presribed on each outlet
+        # Setup absorbing bcs
         try:
-            outlets = problem.outlet_domains
+            outflow = problem.outflow_domains
         except AttributeError:
-            outlets = []
-        outlets = set(outlets)
-        # First check for inconsistency: ie not setting pressure by bcs on oulett
-        assert len(outlets & set(bc[1] for bc in bcs.p)) == 0
-        # Set each outlet 
+            outflow = []
+        outflow = set(outflow)
+        # First check for inconsistency: ie not setting pressure by bcs on outflow
+        assert len(outflow & set(bc[1] for bc in bcs.p)) == 0
+        # Okay, set Absorbing on outflow
         bcp_absorbing = []
-        for outlet in outlets:
-            # Note value here is AbsorbingStress, Dirichlet takes pointer to it
-            # what that pointer points to is update in problem.update
-            value = bcs.absorbing[outlet]
-            bcp_absorbing.append(DirichletBC(Q, value, problem.facet_domains, outlet))
+        for out in outflow:
+            absorbing = AbsorbingStress(problem, problem.facet_domains, out)
+            bcp_absorbing.append(DirichletBC(Q, absorbing, problem.facet_domains, out))
 
         #######
         # FORMS
@@ -145,7 +140,7 @@ class FSI_Decoupled(NSScheme):
         rho_f = Constant(problem.params.rho)   # Fluid density
         # Get solid params for coupling bc term
         rho_s = Constant(problem.params.rho_s) # Solid density 
-        h_s = Constant(problem.params.epsilon)       # Thickness?  
+        h_s = Constant(problem.params.h)       # Thickness?  
         # Extrapolation
         r = self.params.r
         s = self.params.s
@@ -182,12 +177,7 @@ class FSI_Decoupled(NSScheme):
         A1 = assemble(a1)
         b1 = assemble(L1)
 
-        if tolerance < 0:
-            solver_u_tent = create_solver('mumps')
-        else:
-            solver_u_tent = create_solver("gmres", "additive_schwarz")
-            solver_u_tent.parameters['relative_tolerance'] = tolerance
-            solver_u_tent.parameters['absolute_tolerance'] = tolerance
+        solver_u_tent = create_solver("gmres", "additive_schwarz")
 
         # Pressure, Eq 31, mapped to reference mesh (note phi=p - Pext)
         a2 = 1./J*inner(cofac(F)*grad(q), cofac(F)*grad(phi))*dx()
@@ -203,12 +193,7 @@ class FSI_Decoupled(NSScheme):
         A2 = assemble(a2, keep_diagonal=True)
         b2 = assemble(L2)
 
-        if tolerance < 0:
-            solver_p_corr = create_solver('mumps')
-        else:
-            solver_p_corr = create_solver("bicgstab", "amg")
-            solver_p_corr.parameters['relative_tolerance'] = tolerance
-            solver_p_corr.parameters['absolute_tolerance'] = tolerance
+        solver_p_corr = create_solver("bicgstab", "amg")
 
         # Velocity correction (u^n = tilde(u)^n+tau/rho*grad phi^n)
         a3 = inner(J*u, v)*dx()
@@ -221,12 +206,7 @@ class FSI_Decoupled(NSScheme):
         A3 = assemble(a3)
         b3 = assemble(L3)
 
-        if tolerance < 0:
-            solver_u_corr = create_solver('mumps')
-        else:
-            solver_u_corr = create_solver("gmres", "additive_schwarz")
-            solver_u_corr.parameters['relative_tolerance'] = tolerance
-            solver_u_corr.parameters['absolute_tolerance'] = tolerance
+        solver_u_corr = create_solver("gmres", "additive_schwarz")
 
         # Setup the solid model
         solid_step = problem.solid_model(solution=Usolid,
@@ -234,8 +214,7 @@ class FSI_Decoupled(NSScheme):
                                          n=nDgb,
                                          bcs=bc_solid,
                                          dt=dt,
-                                         params=problem.params,
-                                         tol=tolerance)
+                                         params=problem.params)
 
         # Mesh displacement 
         a5 = inner(grad(d), grad(e))*dx
@@ -244,22 +223,16 @@ class FSI_Decoupled(NSScheme):
         A5, b5 = PETScMatrix(), PETScVector()
         ale_assembler.assemble(A5)
         # Since A5 is constant in simulation we can setup preconditioner now
-
-        if tolerance < 0:
-            ale_solver = create_solver('mumps')
-            ale_solver.set_operator(A5)
-            ale_solver.parameters['reuse_factorization'] = True
-        else:
-            ale_solver = PETScKrylovSolver('cg', 'hypre_amg')
-            ale_solver.set_operators(A5, A5)
-            ale_solver.parameters['relative_tolerance'] = tolerance
-            ale_solver.parameters['absolute_tolerance'] = tolerance
+        ale_solver = PETScKrylovSolver('cg', 'hypre_amg')
+        ale_solver.set_operators(A5, A5)
+        ale_solver.parameters['relative_tolerance'] = 1E-8
+        ale_solver.parameters['absolute_tolerance'] = 1E-8
 
         for timestep in xrange(start_timestep + 1, len(timesteps)):
             t.assign(timesteps[timestep])
 
-            # Update various functions: all bcs, all forcing
-            problem.update(spaces, U, P, DF, t, timestep, bcs)
+            # Update various functions
+            problem.update(spaces, U, P, t, timestep, bcs, None, None)
             timer.completed("problem update")
 
             ##########################
@@ -275,11 +248,14 @@ class FSI_Decoupled(NSScheme):
             ###########################
             # Solve pressure correction
             ###########################
+            absorbing.update(U, DF)
+            b2.apply('insert')
             assemble(a2, tensor=A2)
             assemble(L2, tensor=b2)
             # NOTE: apply absorbing pressure!
             for bc in bcp + bcp_absorbing: bc.apply(A2, b2)
 
+            b2.apply("insert")
             solver_p_corr.solve(A2, P.vector(), b2)
 
             ########################
@@ -296,7 +272,7 @@ class FSI_Decoupled(NSScheme):
             # Solve solid
             #############
             # Compute stress on the boundary = fluid stress + outside
-            D_to_Dgb.map(dot(Sigma(mu, U, P, F), cofac(F)*n) + ExternalForcing*n, traction)
+            D_to_Dgb.map(dot(Sigma(mu, U, P, F), cofac(F)*n) + ExternalPressure*n, traction)
             # Update Usolid
             solid_step.solve()
 
@@ -323,7 +299,7 @@ class FSI_Decoupled(NSScheme):
             DFext2.assign(DFext1)
             DFext1.assign(DFext)
             DFext.update(DF)
-            
+
             yield ParamDict(spaces=spaces, observations=None, controls=None,
                             t=float(t), timestep=timestep, 
                             u=U, p=P, d=(Usolid, DF))

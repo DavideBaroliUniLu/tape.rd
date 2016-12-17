@@ -42,12 +42,7 @@ class VectorViscoElastic(SolidModelBase):
 
         a_s, L_s = lhs(form), rhs(form)
         A_s, b_s = PETScMatrix(), PETScVector()
-        if tol < 0:
-            solver_s = PETScLUSolver('mumps')
-        else:
-            solver_s = PETScKrylovSolver('gmres', 'hypre_amg')
-            solver_s.parameters['relative_tolerance'] = tol
-            solver_s.parameters['absolute_tolerance'] = tol
+        solver_s = PETScKrylovSolver('gmres', 'hypre_amg')
 
         # What we need to remember
         # Scalar solutions

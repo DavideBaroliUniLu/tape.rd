@@ -1,15 +1,10 @@
-from boundary_mesh import py_BoundaryMesh
-from itertools import combinations, groupby
-from collections import defaultdict
-from sys import maxsize
-import numpy as np
-import sympy as sp
-from scipy.interpolate import interp1d
 from cbcpost import *
 from cbcpost.utils import *
 from cbcflow import *
 from cbcflow.schemes.utils import *
 from dolfin import *
+import numpy as np
+import sympy as sp
 from sympy.printing import ccode
 
 
@@ -88,7 +83,7 @@ class Extrapolation(Function):
 
 class AbsorbingStress(Constant):
     "Implemented from Nobile and Vergara paper"
-    def __init__(self, problem, facet_domains, indicator, p_ext):
+    def __init__(self, problem, facet_domains, indicator):
         Constant.__init__(self, 0)
         self.ds = Measure('ds',
                           domain=problem.mesh,
@@ -99,13 +94,8 @@ class AbsorbingStress(Constant):
         self.A0 = assemble(Constant(1)*self.ds)
         self.rho_f = problem.params.rho
         self.n = FacetNormal(problem.mesh)
-        self.p_ext = p_ext
 
-    def update(self, u, DF, t):
-        # Update time for the external pressure
-        time = float(t)
-        self.p_ext.t = time
-
+    def update(self, u, DF):
         problem = self.problem
         dim = problem.mesh.geometry().dim()
         F = Identity(dim) + grad(DF)
@@ -117,10 +107,7 @@ class AbsorbingStress(Constant):
 
         Rn = sqrt(An/np.pi)  # Assuming the circle is more-or-less preserved
         beta = problem.params.E*problem.params.h/(1-problem.params.nu**2)*1.0/Rn**2
-        # Computed from NS.
         val = ((sqrt(self.rho_f)/(2*sqrt(2))*Fn/An + sqrt(beta*sqrt(self.A0)))**2 - beta*sqrt(self.A0))
-        # Add the current external stuff
-        val += self.p_ext(time)         # or 0, p_ext is supposed to be constant in space
         self.assign(val)
 
 
@@ -254,247 +241,11 @@ def characteristic_function(domain, subdomain, subdomain_id):
 
     return f
 
-##############################################################################
-# Vittamed forcing stuff
-##############################################################################
-class StepFoo(Constant):
-    '''
-    f(t) which starting from v0 increments every dt its value by dv.
-    '''
-    def __init__(self, v0=0, delta=0, dt=1e9):
-        """
-        v0    : initial value
-        dt    : How often to update value
-        delta : How much to increae value each time step
-        NB! changed names to correspond to json
-        """
-        self.v0 = v0
-        # Catch when StepFoo is intended to be used as a constant
-        self.dv = None if delta == 0 else delta
-        self.dt = dt
-        self._t = 0.
-        Constant.__init__(self, v0)
-
-    @property
-    def t(self):
-        return self._t
-    
-    @t.setter
-    def t(self, t):
-        '''Set time to t thereby increasing the value.'''
-        self._t = t
-        # dv was 0
-        if self.dv is None:
-            self.assign(self.v0)
-        # Something else
-        else:
-            self.assign(self.v0 + self.dv*int((t/self.dt)))
-
-# -----------
-
-class ExternalForcing(Function):
-    '''
-    Function where the spatial dependence is based on values of boundaries;
-    for each marker there is a different constant value.
-    '''
-    def __init__(self, mesh, family, degree, boundaries, marker_values, debug=False):
-        '''
-        V is in FunctionSpace(mesh, family, degree) taking value
-        marker_values[marker] for x in that is in enitity(facet)
-        boundaries[facet] == marker.
-        '''
-        assert mesh.geometry().dim() == 3 and mesh.topology().dim() == 3
-        assert all(isinstance(v, Constant) for v in marker_values.values())
-        if family == 'DG': assert degree == 0
-        # There's more ways to do it. Here bdry_markers which is facet_f of mesh
-        # is translated to cell_f of bmesh. Interfaces are found and introduced
-        # into cell_f. Consequently dofs on the V facet_s are collected for each
-        # marker.
-        markers = marker_values.keys()
-        bmesh, emap  = py_BoundaryMesh(mesh, boundaries, markers)
-        # IDEA: Interface between domains with different markers can be more 
-        # cheaply computed on the boundary mesh. Transfer the markers from mesh 
-        # facet to bmesh cells.
-        cell_2_facet = emap[2]
-        # Transfer
-        cell_f = CellFunction('size_t', bmesh, maxsize)
-        for cell in cells(bmesh): cell_f[cell] = boundaries[int(cell_2_facet[cell.index()])]
-        # Next we want to find interfaces: they are given as new markers in
-        # cell_f, also need to know which values (i.e. marker_values[marker]) to
-        # used
-        cell_f, iface_map = find_interfaces(bmesh, cell_f, markers)
-        # Now we can collect stuff for populating the function
-        V = FunctionSpace(mesh, family, degree)
-        Function.__init__(self, V)
-        # New markers
-        markers.extend(iface_map.keys())
-
-        # Find dofs of the marked facets
-        dofmap = V.dofmap()
-        first, last = dofmap.ownership_range()
-        mesh.init(2, 3)
-        mfacet_2_mcell = mesh.topology()(2, 3)
-
-        marker_dofs = {}
-        for m in markers:
-            m_dofs = []
-            for bmesh_cell in SubsetIterator(cell_f, m):
-                mesh_facet = cell_2_facet[bmesh_cell.index()]
-                mesh_cell = mfacet_2_mcell(mesh_facet)
-                assert len(mesh_cell) == 1
-                mesh_cell = int(mesh_cell)
-
-                cell_dofs = dofmap.cell_dofs(mesh_cell)
-                if not family == 'DG':
-                    for index, facet in enumerate(facets(Cell(mesh, mesh_cell))):
-                        if facet.index() == mesh_facet:
-                            cell_dofs = cell_dofs[dofmap.tabulate_facet_dofs(index)]
-                            break
-                m_dofs.extend(cell_dofs.tolist())
-            # Only local unique
-            m_dofs = set(m_dofs)
-            m_dofs = filter(lambda dof: first <= dofmap.local_to_global_index(dof) < last, m_dofs)
-            marker_dofs[m] = m_dofs
-        # Remember
-        self.marker_values = marker_values
-        self.iface_values = iface_map
-        self.marker_dofs = marker_dofs
-        self.array = self.vector().get_local()
-        self._t = 0
-        self.t = self._t  # Sets the values of the function in marked domains
-           
-    @property
-    def t(self):
-        return self._t
-    
-    @t.setter
-    def t(self, t):
-        self._t = t
-        array = self.array
-        # Those who update
-        for m, value in self.marker_values.items():
-            if isinstance(value, StepFoo): 
-                value.t = self._t
-            array[self.marker_dofs[m]] = value(0)
-        # Iface
-        for m, values in self.iface_values.items():
-            v0, v1 = values
-            value = 0.5*(self.marker_values[v0](0) + self.marker_values[v1](0))
-            array[self.marker_dofs[m]] = value
-
-        self.vector().zero()
-        self.vector().set_local(array)
-        self.vector().apply('insert')
-
-def find_interfaces(bmesh, cell_f, markers):
-    # We will only look at interfaces of 2 domain!
-    # This will be a unique marker within bmesh cell markers
-    root = max(markers) + 1
-    interfaces = {i: m for m, i in enumerate(combinations(markers, 2), root)}
-
-    # We want to find interfaces. A vertex is on an interface if the cells that
-    # share it have different markers
-    bmesh.init(0, 2)
-    bmesh.init(2, 0)
-    topology = bmesh.topology()
-
-    c2v = topology(2, 0)
-    v2c = topology(0, 2)
-    # Cell-cell connectivity is defined via vertices
-    c2c = {cell.index(): map(int, set(sum((v2c(v).tolist() for v in c2v(cell.index())), [])))
-           for cell in cells(bmesh)}
-    # Find the interface and assign marker to it
-    interface_cells = defaultdict(list)
-    used = set([])
-    for cell in cells(bmesh):
-        values = set(cell_f[c] for c in c2c[cell.index()])
-        count = len(values)
-        # Definitely an interface
-        if count > 1:
-            values = tuple(values)
-            assert values in interfaces, '%s has some unknown marker %s' % (values, markers)
-            interface_cells[interfaces[values]].append(int(cell.index()))
-            used.add(values)
-
-    # Now handle the case of interfaces which are on CPU boundaries.
-    # Figure out what markers do the cells on different CPUs have that share the
-    # vertex. Then classify (global) uniquely the marker. The value is transfered 
-    # to local cells
-    local_shared_vertices = topology.shared_entities(0).keys()
-    local_2_global_vertex = topology.global_indices(0)
-    # Look up markers of locally connected cells
-    gv_markers, shared_local_2_global = [], []
-    for lv in local_shared_vertices:
-        lv_markers = list(set(cell_f[c] for c in map(int, v2c(lv))))
-        gv = local_2_global_vertex[lv]
-        gv_markers.append((gv, lv_markers))
-        shared_local_2_global.append(gv)
-    # Communicate these findings and group by global vertex 
-    comm = bmesh.mpi_comm().tompi4py()
-    gv_markers = comm.allreduce(gv_markers)
-
-    first = lambda iterable: next(iter(iterable))
-    gv_tag = {}
-    for gv, grouped in groupby(gv_markers, first):
-        values = set(sum((m for _, m in grouped), []))
-        count = len(values)
-        if count > 1:
-            values = tuple(values)
-            assert values in interfaces, values
-            gv_tag[gv] = interfaces[values]
-
-    # Introduce interface markers to bmesh markers
-    for marker, icells in interface_cells.items():
-        for c in icells: cell_f[c] = marker
-    # Now the local cells connected to labelled vertex can be labelled too
-    for lv, gv in zip(local_shared_vertices, shared_local_2_global):
-        connected_cells = map(int, v2c(lv))
-        if gv in gv_tag:
-            tag = gv_tag[gv]
-            for cell in connected_cells: cell_f[cell] = tag
-    
-    return cell_f, {v: k for k, v in interfaces.items() if k in used}
-
-
-class PressureInterpolator(Constant):   
-    '''Obtain the value at time t from interpolated data.'''
-    def __init__(self, filepath, period=None):
-        self._time = 0.
-        self.period = period
-        self.f = self.interpolate(filepath)
-        # Dummy value
-        Constant.__init__(self, 0.)
-        # Set the value by time
-        self.t = 0.
-
-    def interpolate(self, filepath):     
-        '''Interpolant from loaded data.'''
-        data = np.loadtxt(filepath)
-        if data.ndim == 1:
-            assert self.period is not None
-            x = np.linspace(0, self.period, len(data))
-            y = data
-        else:
-            assert data.ndim == 2
-            x, y = data[:, 0], data[:, 1]
-            self.period = max(x) - min(x)
-        return interp1d(x, y)
-
-    @property
-    def t(self):
-        return self._time
-
-    @t.setter
-    def t(self, t):
-        self._time = t
-        # Periodicity
-        while self._time > self.period: self._time -= self.period
-        self.assign(float(self.f(self._time)))
 
 # ----------------------------------------------------------------------------
 
+
 if __name__ == '__main__':
-    from common import BoundaryRestrictor
     # TESTS
     # Characteristic function should integrate to marked area
     mesh = UnitCubeMesh(10, 10, 10)
@@ -516,47 +267,3 @@ if __name__ == '__main__':
     value = assemble(f*dx(domain=mesh))
     assert near(value, 3., 1E-10)
 
-    # Forcing
-    mesh = Mesh()
-    hdf = HDF5File(mesh.mpi_comm(), './meshes/336add920d9d3466f3498a2ecbab3e2eec43dd734749fca2fbadf8c7.h5', 'r')
-    hdf.read(mesh, '/mesh', False)
-    boundaries = FacetFunction('size_t', mesh)
-    hdf.read(boundaries, '/boundaries')
-    
-    # Sanity
-    f = ExternalForcing(mesh, family='DG', degree=0, boundaries=boundaries,
-                        marker_values={11: StepFoo(1, 0.2, 0.5), 
-                                       12: StepFoo(1, 0.5, 0.2),
-                                       13: StepFoo(1, 0.1, 0.1)})
-
-    ds = ds(domain=mesh, subdomain_data=boundaries)
-    areas = [assemble(f*ds(i)) for i in (11, 12, 13)]
-
-    # How we intend to use it
-    bmesh, emap, bmesh_boundaries = py_BoundaryMesh(mesh, boundaries, [11, 12, 13], True)
-    D = VectorFunctionSpace(mesh, 'CG', 1)
-    Dgb = VectorFunctionSpace(bmesh, 'CG', 1)
-
-    D_to_Dgb = BoundaryRestrictor(D, emap, Dgb)
-    g = Function(Dgb)
-    
-    n = FacetNormal(mesh)
-    D_to_Dgb.map(f*n, g)
-
-    assert g.vector().norm('l2') > 0
-
-    # Check pressure interpolation
-    x = np.linspace(0, 1, 1000)
-    y = np.sin(2*np.pi*x)
-    data = np.savetxt('foo.dat', np.c_[x, y])
-    f = PressureInterpolator('foo.dat')
-
-    t = np.linspace(0, 2, 40)
-    y = []
-    for ti in t:
-        f.t = ti
-        y.append(f(0))
-    y = np.array(y)
-    y0 = np.sin(2*np.pi*t)
-
-    assert np.linalg.norm(y-y0, np.inf) < 1E-4

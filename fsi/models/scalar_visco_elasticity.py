@@ -67,12 +67,7 @@ class ScalarViscoElastic(SolidModelBase):
 
         a_s, L_s = lhs(form), rhs(form)
         A_s, b_s = PETScMatrix(), PETScVector()
-        if tol < 0:
-            solver_s = PETScLUSolver('mumps')
-        else:
-            solver_s = PETScKrylovSolver('gmres', 'hypre_amg')
-            solver_s.parameters['relative_tolerance'] = tol
-            solver_s.parameters['absolute_tolerance'] = tol
+        solver_s = PETScKrylovSolver('gmres', 'hypre_amg')
         # This will be solved for
         dgb = Function(V)
 
@@ -84,15 +79,10 @@ class ScalarViscoElastic(SolidModelBase):
         A_v, b_v = PETScMatrix(), PETScVector()
         assembler_v.assemble(A_v)
         # Since A_v is constant in simulation we can setup preconditioner now
-        if tol < 0:
-            solver_v = PETScLUSolver('mumps')
-            solver_v.set_operator(A_v)
-            solver_v.parameters['reuse_factorization'] = True
-        else:
-            solver_v = PETScKrylovSolver('cg', 'hypre_amg')
-            solver_v.set_operators(A_v, A_v)
-            solver_v.parameters['relative_tolerance'] = tol
-            solver_v.parameters['absolute_tolerance'] = tol
+        solver_v = PETScKrylovSolver('cg', 'hypre_amg')
+        solver_v.set_operators(A_v, A_v)
+        solver_v.parameters['relative_tolerance'] = tol
+        solver_v.parameters['absolute_tolerance'] = tol
 
         # What we need to remember
         # Scalar solutions

@@ -1,0 +1,37 @@
+{
+    "solver": {
+        "time_step": 1E-5, "tolerance": 1E-8, "Tfinal": 3E-2
+    },
+    "fluid_properties": {
+        "density": 1.0, "viscosity": 0.035
+    },
+    "solid_properties":{
+        "E": 0.75E6, "nu": 0.5, "epsilon": 0.1, "density": 1.1, "R": 0.5,
+        "alpha0": 0.1, "alpha1": 0.1
+    },
+    "geometry": {
+        "path": "../../mesh/CYLINDER/cylinder_2.h5",
+        "tags": {"inlets": [2], "outlets": [3], "walls": [1]}
+    },
+    "forcing": [{"tag": 1, "value": 0}
+    ],
+    "boundary_conditions":{
+        "solid": [2, 3],
+        "fluid": {
+            "pressure": [{"tag": 2, 
+		          "value": {"body": "t>5E-3 ? 0.0 : 1E5*sin(pi*t/5E-3)"}}]
+        }
+    },
+    "output":{
+        "sim_name": "Test",
+        "fields": [{"name": "Velocity", "dt": 10},
+		   {"name": "Pressure", "dt": 10},
+		   {"name": "Displacement","dt": 10}]
+    },
+    "galileo":{
+        "walltime": "2:00:00",
+        "numnodes": 1,
+        "numcores": 4,
+        "logfile": "tshape"
+    }
+}

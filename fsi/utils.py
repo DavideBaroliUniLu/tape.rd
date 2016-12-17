@@ -38,7 +38,8 @@ class FSIProblem(NSProblem):
             h = 1.0,
             nu = 0.3,
             alpha0 = 1,
-            alpha1 = 1e-3)
+            alpha1 = 1e-3,
+            epsilon=0.2)
 
         return params
 

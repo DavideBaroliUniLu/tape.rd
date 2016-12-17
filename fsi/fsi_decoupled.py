@@ -141,11 +141,11 @@ class FSI_Decoupled(NSScheme):
         # FORMS
         #######
         # Get fluid parameters
-        mu = Constant(problem.params.mu)          # Fluid viscosity
-        rho_f = Constant(problem.params.rho)      # Fluid density
+        mu = Constant(problem.params.mu)       # Fluid viscosity
+        rho_f = Constant(problem.params.rho)   # Fluid density
         # Get solid params for coupling bc term
-        rho_s = Constant(problem.params.rho_s)    # Solid density 
-        h_s = Constant(problem.params.h)    # Thickness?  
+        rho_s = Constant(problem.params.rho_s) # Solid density 
+        h_s = Constant(problem.params.epsilon)       # Thickness?  
         # Extrapolation
         r = self.params.r
         s = self.params.s
@@ -183,7 +183,7 @@ class FSI_Decoupled(NSScheme):
         b1 = assemble(L1)
 
         if tolerance < 0:
-            solver_u_tent = create_solver('superlu_dist')
+            solver_u_tent = create_solver('mumps')
         else:
             solver_u_tent = create_solver("gmres", "additive_schwarz")
             solver_u_tent.parameters['relative_tolerance'] = tolerance
@@ -204,7 +204,7 @@ class FSI_Decoupled(NSScheme):
         b2 = assemble(L2)
 
         if tolerance < 0:
-            solver_p_corr = create_solver('superlu_dist')
+            solver_p_corr = create_solver('mumps')
         else:
             solver_p_corr = create_solver("bicgstab", "amg")
             solver_p_corr.parameters['relative_tolerance'] = tolerance
@@ -222,7 +222,7 @@ class FSI_Decoupled(NSScheme):
         b3 = assemble(L3)
 
         if tolerance < 0:
-            solver_u_corr = create_solver('superlu_dist')
+            solver_u_corr = create_solver('mumps')
         else:
             solver_u_corr = create_solver("gmres", "additive_schwarz")
             solver_u_corr.parameters['relative_tolerance'] = tolerance
@@ -246,7 +246,7 @@ class FSI_Decoupled(NSScheme):
         # Since A5 is constant in simulation we can setup preconditioner now
 
         if tolerance < 0:
-            ale_solver = create_solver('superlu_dist')
+            ale_solver = create_solver('mumps')
             ale_solver.set_operator(A5)
             ale_solver.parameters['reuse_factorization'] = True
         else:

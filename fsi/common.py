@@ -73,7 +73,7 @@ class BoundaryProlongator(object):
                 # Otherwise singular mat. NOTE: breaks symmetry - so bicgstab
                 # FIXME: petsc has zeroRowsColums that could help here
                 if self.tol < 0:
-                    solver = PETScLUSolver('superlu_dist')
+                    solver = PETScLUSolver('mumps')
                     solver.set_operator(M)
                     solver.parameters['reuse_factorization'] = True
                 else:
@@ -145,7 +145,7 @@ class BoundaryRestrictor(object):
                 M = assemble(inner(u, v)*dx)
 
                 if self.tol < 0:
-                    solver = PETScLUSolver('superlu_dist')
+                    solver = PETScLUSolver('mumps')
                     solver.set_operator(M)
                     solver.parameters['reuse_factorization'] = True
                 else:

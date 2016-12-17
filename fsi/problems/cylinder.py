@@ -3,10 +3,10 @@ from utils import FSIProblem
 from utils import pressure_transition
 from boundary_mesh import py_BoundaryMesh
 from models.scalar_visco_elasticity import ScalarViscoElastic
+# from models.vector_visco_elasticity import VectorViscoElastic
+# from models.membrane import SolidMembrane
 from collections import namedtuple
-import os
 
-taperd_dir = '..'
 
 class Cylinder(FSIProblem):
     def __init__(self, params=None):
@@ -18,14 +18,14 @@ class Cylinder(FSIProblem):
 
         # Fluid domain setup
         mesh = Mesh()
-        hdf = HDF5File(mesh.mpi_comm(), os.path.join(taperd_dir, 'mesh/CYLINDER/cylinder_2.h5'), 'r')
+        hdf = HDF5File(mesh.mpi_comm(), "../mesh/CYLINDER/cylinder_2.h5", 'r')
         hdf.read(mesh, '/mesh', False)
         boundaries = FacetFunction('size_t', mesh)
         hdf.read(boundaries, '/boundaries')
         self.initialize_geometry(mesh, facet_domains=boundaries)
 
         # Solid domain setup
-        bmesh, emap, bmesh_boundaries = py_BoundaryMesh(mesh, boundaries, [1], True)
+        bmesh, emap, bmesh_boundaries = py_BoundaryMesh(mesh, boundaries, self.Epsilon, True)
         self.bmesh = bmesh
         self.bmesh_boundaries = bmesh_boundaries
         self.emap = emap
@@ -33,8 +33,9 @@ class Cylinder(FSIProblem):
         self.solid_model = ScalarViscoElastic
 
         # Forcing
-        self.ExternalForcing = Constant(0) 
+        # self.ExternalPressure = pressure_transition(pLeft=0, pRight=0, w=1)
         # Outflow part of the boundary might require special trearment
+        self.ExternalForcing = Constant(0)
         self.outflow_domains = (self.right, )
 
     @classmethod
@@ -74,8 +75,7 @@ class Cylinder(FSIProblem):
         # The flow is pressure driven
         bcp = [(Expression("time>stress_time ? 0.0 : A*sin(pi*time/stress_time)",
                            A=self.params.stress_amplitude, time=float(t),
-                           stress_time=self.params.stress_time,
-                           degree=4),
+                           stress_time=self.params.stress_time, degree=1),
                 self.left)]
         # Here we only specify DirichltBCs for (normal component) of solid
         # displacement, i.e. scalar functions. If not specified the boundary
@@ -86,7 +86,7 @@ class Cylinder(FSIProblem):
         BcsTuple = namedtuple('BcsTuple', ['u', 'p', 'solid'])
         return BcsTuple(bcu, bcp, bcsolid)
 
-    def update(self, spaces, u, p, df, t, timestep, bcs, *args, **kwargs):
+    def update(self, spaces, u, p, DF, t, timestep, bcs, *args, **kwargs):
         # The only time-dependent bc in this case is pressure
         for value, tag in bcs.p:
             if hasattr(value, 'time'): value.time = float(t)

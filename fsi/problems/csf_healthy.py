@@ -75,7 +75,8 @@ class CSF(FSIProblem):
         # The flow is pressure driven
         bcp = [(Expression("time>stress_time ? 0.0 : A*sin(pi*time/stress_time)",
                            A=self.params.stress_amplitude, time=float(t),
-                           stress_time=self.params.stress_time),
+                           stress_time=self.params.stress_time,
+                           degree=3),
                 self.left)]
         # Here we only specify DirichltBCs for (normal component) of solid
         # displacement, i.e. scalar functions. If not specified the boundary

@@ -254,15 +254,15 @@ if __name__ == '__main__':
             data = process_series_ellipse(data=data, fit='mid', lstsq=False)
 
             x, a, b, A, B = data['x'], data['a'], data['b'], data['A'], data['B']
-            plt.figure()
-            plt.plot(x, a, 'rx')
-            plt.plot(x, b, 'ro')
-            plt.plot(x, A, 'bx')
-            plt.plot(x, B, 'bo')
-            plt.show()
+            # plt.figure()
+            # plt.plot(x, a, 'rx')
+            # plt.plot(x, b, 'ro')
+            # plt.plot(x, A, 'bx')
+            # plt.plot(x, B, 'bo')
+            # plt.show()
 
-            size = [0.05]*len(data['x'])
-            SIZE = [0.1]*len(data['x'])
+            size = [0.2]*len(data['x'])
+            SIZE = [0.4]*len(data['x'])
             mesh_params = {'size': size, 
                            'SIZE': SIZE,
                            'nsplines': 30,
@@ -272,7 +272,7 @@ if __name__ == '__main__':
             tapered_mesh_ellipse(data=data,
                                  name=kind,
                                  mesh_params=mesh_params,
-                                 nrefs=1)
+                                 nrefs=3)
             
             folder = 'HOLLOW-ELLIPSOID-%s' % kind.upper()
             name = 'hollow-ellipsoid-%s_0.h5' % kind
@@ -290,7 +290,7 @@ if __name__ == '__main__':
             cell_f = CellFunction('size_t', bmesh, 0)
             for cell in cells(bmesh): cell_f[cell] = facet_f[c2f[int(cell.index())]]
 
-            plot(cell_f, interactive=True)
+            # plot(cell_f, interactive=True)
 
             out = XDMFFile(mesh.mpi_comm(), '%s.xdmf' % kind)
             out.write(cell_f, XDMFFile.Encoding_HDF5)

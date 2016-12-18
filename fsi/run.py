@@ -7,7 +7,7 @@ from cbcflow import NSSolver
 from fsi_decoupled import FSI_Decoupled
 from fields import *
 import numpy as np
-
+# from problems import csf_healthy
 from problems import cylinder
 
 # How
@@ -17,7 +17,8 @@ scheme = FSI_Decoupled(dict(r=1, s=0, u_degree=1))
 # What
 dt = 1E-5
 N = 2
-problem = cylinder.Cylinder(dict(dt=dt, N=N, T=3e-2, stress_amplitude=1e4, stress_time=5e-3))
+# problem = csf_healthy.CSF(dict(dt=dt, N=N, T=3e-2, stress_amplitude=8e2, stress_time=5e-3))
+problem = cylinder.Cylinder(dict(dt=dt, N=N, T=3e-2, stress_amplitude=8e2, stress_time=5e-3))
 
 # Saving
 _plot = False

@@ -37,7 +37,7 @@ class InflowFromFlux(Expression):
         solver = LUSolver(A, 'mumps')
         solver.parameters['reuse_factorization'] = True
         
-        snapshots = []
+        times, snapshots = [], []
         b = Vector()
         for time, flux_value in fluxes:
             wh = Function(W)
@@ -48,13 +48,14 @@ class InflowFromFlux(Expression):
 
             uh, ph = wh.split(deepcopy=True)
             uh.set_allow_extrapolation(True)
-
-            snapshots.append((time, uh))
+            
+            times.append(time)
+            snapshots.append(uh)
 
         self._time = 0.
-        # What we need to rememeber are snapshots, period, out time
+        self.period = times[-1]
+        self.times = times
         self.snapshots = snapshots
-        self.period = time  # Because that is the last one in the for loop
         self.t = 0.
         pass
 
@@ -67,9 +68,9 @@ class InflowFromFlux(Expression):
         self._time = t
         # Periodicity
         while self._time > self.period: self._time -= self.period
+
+        times = self.times
         # Now find the snapshot indices
-        times = [p[0] for p in self.snapshots]
-        
         index = [i 
                  for i in range(len(times)-1)
                  if between(self._time, (times[i], times[i+1]))].pop()
@@ -77,9 +78,13 @@ class InflowFromFlux(Expression):
         self.index = index
 
     def eval(self, value, x):
-        _, uh = self.snapshots[self.index]
-        value[:] = uh(x)
-        pass
+        # left and right values
+        index = self.index
+        uh, Uh = self.snapshots[index](x), self.snapshots[index+1](x)
+        ts, Ts = self.times[index], self.times[index+1]   # Snaphost times
+        # Now perform linear interpolation
+        t = self.t
+        value[:] = uh*(Ts-t)/(Ts-ts) + Uh*(t-ts)/(Ts-ts)
 
     def value_shape(self):
         return (3, )
@@ -104,24 +109,42 @@ if __name__ == '__main__':
                          boundaries, marker=1, n=Constant((-1, 0, 0)),
                          fluxes=fluxes, degree=1)
 
+    import matplotlib.pyplot as plt
 
-    V = VectorFunctionSpace(mesh, 'CG', 1)
-    u = TrialFunction(V)
-    v = TestFunction(V)
-    zero = Constant((0, 0, 0))
+    times = fluxes[:, 0]
 
-    a = inner(grad(u), grad(v))*dx
-    L = inner(zero, v)*dx
-    bc0 = [DirichletBC(V, zero, boundaries, i) for i in (2, 3, 4)]
-    bci = [DirichletBC(V, foo, boundaries, 1)]
-    bcs = bc0 + bci
+    plt.figure()
+    plt.plot(times, fluxes[:, 1])
 
-    uh = Function(V)
-    for t in np.linspace(0, 4, 30):
+    times = np.linspace(times[0], times[-1], 30)
+    y = []
+    for t in times:
         foo.t = t
-        solve(a == L, uh, bcs)
-        plot(uh, title='t = %gs' % t)
-    interactive()
+        y.append(foo(0, 
+
+
+    plt.show()
+
+
+    # Use in boundary value problem
+    if False:
+        V = VectorFunctionSpace(mesh, 'CG', 1)
+        u = TrialFunction(V)
+        v = TestFunction(V)
+        zero = Constant((0, 0, 0))
+
+        a = inner(grad(u), grad(v))*dx
+        L = inner(zero, v)*dx
+        bc0 = [DirichletBC(V, zero, boundaries, i) for i in (2, 3, 4)]
+        bci = [DirichletBC(V, foo, boundaries, 1)]
+        bcs = bc0 + bci
+
+        uh = Function(V)
+        for t in np.linspace(0, 4, 30):
+            foo.t = t
+            solve(a == L, uh, bcs)
+            plot(uh, title='t = %gs' % t)
+        interactive()
 
     # FIXME: plot @ point vs. Erika to make sure this is okay
     # TODO: use with simulations

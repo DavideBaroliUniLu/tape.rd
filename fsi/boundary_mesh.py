@@ -116,12 +116,115 @@ def py_SubMesh(mesh, markers, marker):
     global_cell_distribution = comm.allgather(len(base_cell_indices))
     have_marked_cells = sum(global_cell_distribution) 
     assert have_marked_cells
-    assert all(count > 0 for count in global_cell_distribution)
 
-    # Get local
-    topology = mesh.topology()
-    # Cells of base mesh to use by local coordinates of their vertices
+    if all(count > 0 for count in global_cell_distribution):
+        return build_mesh_on_all_cpus(mesh, base_cell_indices)
+    else:
+        # We can try to build the mesh as distributed if all the info is on one CPU
+        # Figure out who has the data
+        counts = set(global_cell_distribution)
+        zero, not_zero = sorted(counts)
+        assert zero == 0
+
+        master = global_cell_distribution.index(not_zero)
+        assert master == 0
+        is_master = master == comm.rank
+
+        global_num_cells, global_num_vertices = 0, 0
+        if is_master:
+            # Cells of submesh as ntuple of vertices in base mesh
+            base_cells = mesh.cells()[base_cell_indices]  
+            # Unique vertices that make up submesh in their mesh indexing
+            base_vertex_indices = np.unique(base_cells.flatten())
+            # Map base to local vertex
+            base_to_sub_indices = {b: l for l, b in enumerate(base_vertex_indices)}
+            # Cells of submesh as ntuple of vertices in submesh numbering
+            sub_cells = [[base_to_sub_indices[j] for j in c] for c in base_cells]
+
+            # Store vertices as sub_vertices[local_index] = (global_index, coordinates)
+            coordinates = mesh.coordinates()
+            # Done creating done. Let's write the mesh: global cell and vertex cound
+            global_num_cells = len(sub_cells)
+            global_num_vertices = len(base_to_sub_indices)
+
+        global_num_cells = comm.bcast(global_num_cells, master)
+        global_num_vertices = comm.bcast(global_num_vertices, master)
+
+        submesh = Mesh()
+        mesh_editor = MeshEditor()
+        cell = mesh.ufl_cell().cellname()
+        tdim = mesh.topology().dim()
+        gdim = mesh.geometry().dim()
+        mesh_editor.open(submesh, cell, tdim, gdim)
+
+        mesh_editor.init_cells_global(global_num_cells, global_num_cells)
+        mesh_editor.init_vertices_global(global_num_vertices, global_num_vertices)
+
+        if is_master:
+            for index, cell in enumerate(sub_cells): 
+                mesh_editor.add_cell(index, *cell)
+            
+            for base_vertex, sub_vertex in base_to_sub_indices.iteritems():
+                mesh_editor.add_vertex_global(sub_vertex, sub_vertex, coordinates[base_vertex])
+        
+        mesh_editor.close()
+
+        local_mesh_data = LocalMeshData(submesh)
+        ghost_mode = parameters['ghost_mode']
+        MeshPartitioning.build_distributed_mesh(submesh, local_mesh_data, ghost_mode);
+
+        return submesh
+
+
+def build_mesh_on_master_cpu(submesh, mesh, base_cell_indices):
+    '''TODO'''
+    comm = mesh.mpi_comm().tompi4py()
+
+    # Cells of submesh as ntuple of vertices in base mesh
     base_cells = mesh.cells()[base_cell_indices]  
+    # Unique vertices that make up submesh in their mesh indexing
+    base_vertex_indices = np.unique(base_cells.flatten())
+    # Map base to local vertex
+    base_to_sub_indices = {b: l for l, b in enumerate(base_vertex_indices)}
+    # Cells of submesh as ntuple of vertices in submesh numbering
+    sub_cells = [[base_to_sub_indices[j] for j in c] for c in base_cells]
+
+    # Store vertices as sub_vertices[local_index] = (global_index, coordinates)
+    coordinates = mesh.coordinates()
+    # Done creating done. Let's write the mesh: global cell and vertex cound
+    global_num_cells = len(sub_cells)
+    global_num_vertices = len(base_to_sub_indices)
+
+    tdim, gdim = mesh.topology().dim(), mesh.geometry().dim()
+
+    submesh = Mesh()
+    mesh_editor = MeshEditor()
+    mesh_editor.open(submesh, mesh.ufl_cell().cellname(), tdim, gdim)
+
+    mesh_editor.init_cells_global(global_num_cells, global_num_cells)
+    mesh_editor.init_vertices_global(global_num_vertices, global_num_vertices)
+
+    for index, cell in enumerate(sub_cells): 
+        mesh_editor.add_cell(index, *cell)
+    
+    for base_vertex, sub_vertex in base_to_sub_indices.iteritems():
+        mesh_editor.add_vertex_global(sub_vertex, sub_vertex, coordinates[base_vertex])
+
+    mesh_editor.close(False)
+
+    return submesh
+
+
+def build_mesh_on_all_cpus(mesh_, base_cell_indices_):
+    '''
+    Build the mesh on each process separately, while maintaining some sort
+    of notion of how the global mesh is.
+    '''
+    comm = mesh_.mpi_comm().tompi4py()
+    # Get local
+    topology = mesh_.topology()
+    # Cells of base mesh to use by local coordinates of their vertices
+    base_cells = mesh.cells()[base_cell_indices_]  
     base_vertex_indices = np.unique(base_cells.flatten())
     
     # Need global mapping to talk about uniqueness of shared quantities
@@ -221,8 +324,7 @@ def py_SubMesh(mesh, markers, marker):
     submesh.topology().init(0, len(sub_vertices), global_num_vertices)
     submesh.topology().init(tdim, len(sub_cells), global_num_cells)
 
-
-    entity_map = {0: base_vertex_indices, tdim: base_cell_indices}
+    entity_map = {0: base_vertex_indices, tdim: base_cell_indices_}
 
     return submesh, entity_map
 

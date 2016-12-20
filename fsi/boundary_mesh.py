@@ -127,8 +127,9 @@ def py_SubMesh(mesh, markers, marker):
         assert zero == 0
 
         master = global_cell_distribution.index(not_zero)
-        assert master == 0
+        assert master == 0, global_cell_distribution
         is_master = master == comm.rank
+        # FIXME: lift this by sending data to 0
 
         global_num_cells, global_num_vertices = 0, 0
         if is_master:

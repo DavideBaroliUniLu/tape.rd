@@ -111,18 +111,20 @@ if __name__ == '__main__':
 
     mesh = Mesh()
     hdf = HDF5File(mesh.mpi_comm(),
-                   '../mesh/HOLLOW-ELLIPSOID-HEALTY/hollow-ellipsoid-healty_0.h5',
+                   '../mesh/HOLLOW-ELLIPSOID-HEALTY/hollow-ellipsoid-healty_2.h5',
                    'r')
     hdf.read(mesh, '/mesh', False)
     boundaries = FacetFunction('size_t', mesh)
     hdf.read(boundaries, '/boundaries')
+
+    plot(boundaries, interactive=True)
 
     fluxes = np.loadtxt('input_data/Vegards01_VolumetricCSFFlow.txt')
     fluxes = fluxes[:, :2]
     fluxes[:, -1] *= -1.
 
     foo = InflowFromFlux(mesh,
-                         boundaries, marker=4, n=Constant((-1, 0, 0)),
+                         boundaries, marker=1, n=Constant((-1, 0, 0)),
                          fluxes=fluxes, degree=1)
 
     if False:

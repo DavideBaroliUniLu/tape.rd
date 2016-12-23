@@ -123,8 +123,9 @@ def py_SubMesh(mesh, markers, marker):
         # We can try to build the mesh as distributed if all the info is on one CPU
         # Figure out who has the data
         counts = set(global_cell_distribution)
+        print counts
         zero, not_zero = sorted(counts)
-        assert zero == 0
+        assert zero == 0, counts
 
         master = global_cell_distribution.index(not_zero)
         is_master = master == comm.rank
@@ -250,7 +251,7 @@ def build_mesh_on_all_cpus(mesh_, base_cell_indices_):
     # Get local
     topology = mesh_.topology()
     # Cells of base mesh to use by local coordinates of their vertices
-    base_cells = mesh.cells()[base_cell_indices_]  
+    base_cells = mesh_.cells()[base_cell_indices_]  
     base_vertex_indices = np.unique(base_cells.flatten())
     
     # Need global mapping to talk about uniqueness of shared quantities
@@ -298,7 +299,7 @@ def build_mesh_on_all_cpus(mesh_, base_cell_indices_):
     sub_cells = [[base_to_sub_local_indices[j] for j in c] for c in base_cells]
 
     # Store vertices as sub_vertices[local_index] = (global_index, coordinates)
-    coordinates = mesh.coordinates()
+    coordinates = mesh_.coordinates()
     sub_vertices = {}
     for base_local, sub_local in base_to_sub_local_indices.iteritems():
         sub_vertices[sub_local] = (base_to_sub_global_indices[vertex_l2g[base_local]], coordinates[base_local])
@@ -307,11 +308,11 @@ def build_mesh_on_all_cpus(mesh_, base_cell_indices_):
     global_num_cells = comm.allreduce(len(sub_cells))
     global_num_vertices = sum(unshared_vertices_dist) + shared_count
 
-    tdim, gdim = mesh.topology().dim(), mesh.geometry().dim()
+    tdim, gdim = mesh_.topology().dim(), mesh_.geometry().dim()
 
     submesh = Mesh()
     mesh_editor = MeshEditor()
-    mesh_editor.open(submesh, mesh.ufl_cell().cellname(), tdim, gdim)
+    mesh_editor.open(submesh, mesh_.ufl_cell().cellname(), tdim, gdim)
 
     mesh_editor.init_vertices(len(sub_vertices))
     mesh_editor.init_cells_global(len(sub_cells), global_num_cells)
@@ -341,7 +342,7 @@ def build_mesh_on_all_cpus(mesh_, base_cell_indices_):
     }
     """
     set_shared_entities = compile_extension_module(cpp_code).set_shared_entities
-    base_se = mesh.topology().shared_entities(0)
+    base_se = mesh_.topology().shared_entities(0)
 
     for li in shared_local_indices:
         arr = np.array(base_se[li], dtype=np.uintp)
@@ -460,7 +461,7 @@ if __name__ == '__main__':
 
     mesh = Mesh()
     hdf = HDF5File(mesh.mpi_comm(),
-                   '../mesh/HOLLOW-ELLIPSOID-HEALTY/hollow-ellipsoid-healty_0.h5',
+                   '../mesh/HOLLOW-ELLIPSOID-HEALTY/hollow-ellipsoid-healty_2.h5',
                    'r')
     hdf.read(mesh, '/mesh', False)
     boundaries = FacetFunction('size_t', mesh)

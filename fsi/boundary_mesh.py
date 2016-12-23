@@ -127,30 +127,54 @@ def py_SubMesh(mesh, markers, marker):
         assert zero == 0
 
         master = global_cell_distribution.index(not_zero)
-        assert master == 0, global_cell_distribution
         is_master = master == comm.rank
-        # FIXME: lift this by sending data to 0
 
+        # The owner prepares the data
         global_num_cells, global_num_vertices = 0, 0
         if is_master:
             # Cells of submesh as ntuple of vertices in base mesh
             base_cells = mesh.cells()[base_cell_indices]  
             # Unique vertices that make up submesh in their mesh indexing
             base_vertex_indices = np.unique(base_cells.flatten())
+            # NOTE: coordinates are local so make sense only here
+            coordinates = mesh.coordinates().flatten()
+
+            global_num_cells = len(base_cell_indices)
+            global_num_vertices = len(base_vertex_indices)
+            ncoords = np.array([len(coordinates)], dtype=int)
+        # Communicate to every what mesh is going to be built
+        global_num_cells = comm.bcast(global_num_cells, master)
+        global_num_vertices = comm.bcast(global_num_vertices, master)
+
+        # Communicate the data for mesh editor
+        if is_master and not comm.rank == 0:
+            comm.Send([base_cells.astype(int), pyMPI.INT], dest=0, tag=1)
+            comm.Send([base_vertex_indices.astype(int), pyMPI.INT], 0, tag=2)
+
+            comm.Send([ncoords, pyMPI.INT], 0, tag=3)
+            comm.Send([coordinates, pyMPI.FLOAT], 0, tag=4)
+        # Complete also ...
+        if comm.rank == 0:
+            if not is_master:
+                base_cells = np.zeros(global_num_cells*3, dtype=int)
+                comm.Recv([base_cells, pyMPI.INT], source=master, tag=1)
+
+                base_vertex_indices = np.zeros(global_num_vertices, dtype=int)
+                comm.Recv([base_vertex_indices, pyMPI.INT], master, tag=2)
+
+                ncoords = np.zeros(1, dtype=int)
+                comm.Recv([ncoords, pyMPI.INT], master, tag=3)
+                coordinates = np.zeros(ncoords, dtype=float)
+                comm.Recv([coordinates, pyMPI.FLOAT], master, tag=4)
+
+            coordinates = coordinates.reshape((-1, 3))
+            base_cells = base_cells.reshape((-1, 3))
             # Map base to local vertex
             base_to_sub_indices = {b: l for l, b in enumerate(base_vertex_indices)}
             # Cells of submesh as ntuple of vertices in submesh numbering
             sub_cells = [[base_to_sub_indices[j] for j in c] for c in base_cells]
 
-            # Store vertices as sub_vertices[local_index] = (global_index, coordinates)
-            coordinates = mesh.coordinates()
-            # Done creating done. Let's write the mesh: global cell and vertex cound
-            global_num_cells = len(sub_cells)
-            global_num_vertices = len(base_to_sub_indices)
-
-        global_num_cells = comm.bcast(global_num_cells, master)
-        global_num_vertices = comm.bcast(global_num_vertices, master)
-
+        # Everybody init
         submesh = Mesh()
         mesh_editor = MeshEditor()
         cell = mesh.ufl_cell().cellname()
@@ -161,7 +185,8 @@ def py_SubMesh(mesh, markers, marker):
         mesh_editor.init_cells_global(global_num_cells, global_num_cells)
         mesh_editor.init_vertices_global(global_num_vertices, global_num_vertices)
 
-        if is_master:
+        # Only root fills
+        if comm.rank == 0:
             for index, cell in enumerate(sub_cells): 
                 mesh_editor.add_cell(index, *cell)
             
@@ -432,83 +457,104 @@ def preprocess_bdry_mesh(mesh_name, folder, fsi_tag):
 # ----------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    import sys
 
-    cell_lookup = {10: 800, 20: 3200, 30: 7200}
-    vertex_lookup = {10: 440, 20: 1680, 30: 3720}
+    mesh = Mesh()
+    hdf = HDF5File(mesh.mpi_comm(),
+                   '../mesh/HOLLOW-ELLIPSOID-HEALTY/hollow-ellipsoid-healty_0.h5',
+                   'r')
+    hdf.read(mesh, '/mesh', False)
+    boundaries = FacetFunction('size_t', mesh)
+    hdf.read(boundaries, '/boundaries')
 
-    for ncells in (10, 20, 30):
-        mesh = BoxMesh(Point(-1, -1, -1), Point(1, 1, 1), *(ncells, )*3)
-        
-        boundaries = FacetFunction('size_t', mesh, 0)
-        DomainBoundary().mark(boundaries, 1)
-        CompiledSubDomain('near(1.+x[0], 0)').mark(boundaries, 3)
-        CompiledSubDomain('near(1.-x[0], 0)').mark(boundaries, 4)
+    bmesh = BoundaryMesh(mesh, 'exterior')
+    c2f = bmesh.entity_map(2)
 
-        bmesh, entity_map, boundaries = py_BoundaryMesh(mesh, boundaries, 1, True)
-        # bmesh = py_BoundaryMesh(mesh)
-        # c2f = bmesh.entity_map(bmesh.topology().dim())
+    bmesh_subdomains = CellFunction('size_t', bmesh, 0)
+    for cell in cells(bmesh):
+        bmesh_subdomains[cell] = boundaries[c2f[int(cell.index())]]
 
-        # Check mapping of cell to facet
-        c2f = entity_map[bmesh.topology().dim()]
-        count = 0
-        for cell in cells(bmesh):
-            facet = Facet(mesh, c2f[cell.index()])
-            assert cell.midpoint().distance(facet.midpoint()) < 1E-15
-            count += 1
-        info('Checked %d facets/cells' % count)
+    inlet_mesh = py_SubMesh(bmesh, bmesh_subdomains, 1)
 
-        # Check mapping of vertices
-        v2v = entity_map[0]
-        count = 0
-        for bvertex in vertices(bmesh):
-            count += 1
-            vertex = Vertex(mesh, v2v[bvertex.index()])
-            assert vertex.midpoint().distance(bvertex.midpoint()) < 1E-14
-        info('Checked %d vertices' % count)
-        
-        # Mesh construction okay?
-        info('#cells = %d' % bmesh.num_cells()) 
-        info('#vertices = %d' % bmesh.num_vertices()) 
-        if ncells in (10, 20, 30):
-            assert bmesh.size_global(0) == vertex_lookup[ncells]
-            assert bmesh.size_global(2) == cell_lookup[ncells]
-        
-        # FunctionSpace constuction okay?
-        V = FunctionSpace(bmesh, 'CG', 1)
-        assert V.dim() == bmesh.size_global(0) 
+    plot(inlet_mesh, interactive=True)
 
-        # NOTE: Run in parallel and load in paraview to see that we have a bug. There
-        # is not such thing with simple BoundaryMesh so we are still missing
-        # something. This was a BUG, now fixed -- see # 115
-        # f = XDMFFile('bmesh.xdmf')
-        # f.write(bmesh)
+    if False:
+        import sys
 
-        # Some check for marking boundaries
-        for i in (3, 4):
-            dsi = Measure('ds', domain=bmesh, subdomain_data=boundaries, subdomain_id=i)
-            e = assemble(Constant(1)*dsi)
-            assert near(e, 8., 1E-10)
+        cell_lookup = {10: 800, 20: 3200, 30: 7200}
+        vertex_lookup = {10: 440, 20: 1680, 30: 3720}
 
-        # Loading ....
-        preprocess_bdry_mesh(mesh_name='cylinder_0.h5', folder='./meshes/CYLINDER', fsi_tag=1)
-        assert preprocess_bdry_mesh(mesh_name='cylinder_0.h5', folder='./meshes/CYLINDER', fsi_tag=1)
+        for ncells in (10, 20, 30):
+            mesh = BoxMesh(Point(-1, -1, -1), Point(1, 1, 1), *(ncells, )*3)
+            
+            boundaries = FacetFunction('size_t', mesh, 0)
+            DomainBoundary().mark(boundaries, 1)
+            CompiledSubDomain('near(1.+x[0], 0)').mark(boundaries, 3)
+            CompiledSubDomain('near(1.-x[0], 0)').mark(boundaries, 4)
 
-        # Check multiple markers defining FSI domain
-        mesh = BoxMesh(Point(-1, -1, -1), Point(1, 1, 1), *(ncells, )*3)
-        boundaries = FacetFunction('size_t', mesh, 0)
+            bmesh, entity_map, boundaries = py_BoundaryMesh(mesh, boundaries, 1, True)
+            # bmesh = py_BoundaryMesh(mesh)
+            # c2f = bmesh.entity_map(bmesh.topology().dim())
 
-        tag = 0
-        for dim in range(3):
-            tag += 1
-            CompiledSubDomain('near(1.+x[%d], 0)' % dim).mark(boundaries, tag)
-            tag += 1
-            CompiledSubDomain('near(1.-x[%d], 0)' % dim).mark(boundaries, tag)
+            # Check mapping of cell to facet
+            c2f = entity_map[bmesh.topology().dim()]
+            count = 0
+            for cell in cells(bmesh):
+                facet = Facet(mesh, c2f[cell.index()])
+                assert cell.midpoint().distance(facet.midpoint()) < 1E-15
+                count += 1
+            info('Checked %d facets/cells' % count)
 
-        bmesh, entity_map, boundaries = py_BoundaryMesh(mesh, boundaries, [1, 2, 3, 4], True)
-        for i in (5, 6):
-            dsi = Measure('ds', domain=bmesh, subdomain_data=boundaries, subdomain_id=i)
-            e = assemble(Constant(1)*dsi)
-            assert near(e, 8., 1E-10)
-        # plot(boundaries)
-        # interactive()
+            # Check mapping of vertices
+            v2v = entity_map[0]
+            count = 0
+            for bvertex in vertices(bmesh):
+                count += 1
+                vertex = Vertex(mesh, v2v[bvertex.index()])
+                assert vertex.midpoint().distance(bvertex.midpoint()) < 1E-14
+            info('Checked %d vertices' % count)
+            
+            # Mesh construction okay?
+            info('#cells = %d' % bmesh.num_cells()) 
+            info('#vertices = %d' % bmesh.num_vertices()) 
+            if ncells in (10, 20, 30):
+                assert bmesh.size_global(0) == vertex_lookup[ncells]
+                assert bmesh.size_global(2) == cell_lookup[ncells]
+            
+            # FunctionSpace constuction okay?
+            V = FunctionSpace(bmesh, 'CG', 1)
+            assert V.dim() == bmesh.size_global(0) 
+
+            # NOTE: Run in parallel and load in paraview to see that we have a bug. There
+            # is not such thing with simple BoundaryMesh so we are still missing
+            # something. This was a BUG, now fixed -- see # 115
+            # f = XDMFFile('bmesh.xdmf')
+            # f.write(bmesh)
+
+            # Some check for marking boundaries
+            for i in (3, 4):
+                dsi = Measure('ds', domain=bmesh, subdomain_data=boundaries, subdomain_id=i)
+                e = assemble(Constant(1)*dsi)
+                assert near(e, 8., 1E-10)
+
+            # Loading ....
+            preprocess_bdry_mesh(mesh_name='cylinder_0.h5', folder='./meshes/CYLINDER', fsi_tag=1)
+            assert preprocess_bdry_mesh(mesh_name='cylinder_0.h5', folder='./meshes/CYLINDER', fsi_tag=1)
+
+            # Check multiple markers defining FSI domain
+            mesh = BoxMesh(Point(-1, -1, -1), Point(1, 1, 1), *(ncells, )*3)
+            boundaries = FacetFunction('size_t', mesh, 0)
+
+            tag = 0
+            for dim in range(3):
+                tag += 1
+                CompiledSubDomain('near(1.+x[%d], 0)' % dim).mark(boundaries, tag)
+                tag += 1
+                CompiledSubDomain('near(1.-x[%d], 0)' % dim).mark(boundaries, tag)
+
+            bmesh, entity_map, boundaries = py_BoundaryMesh(mesh, boundaries, [1, 2, 3, 4], True)
+            for i in (5, 6):
+                dsi = Measure('ds', domain=bmesh, subdomain_data=boundaries, subdomain_id=i)
+                e = assemble(Constant(1)*dsi)
+                assert near(e, 8., 1E-10)
+            # plot(boundaries)
+            # interactive()

@@ -1,75 +1,105 @@
 from dolfin import *
 from boundary_mesh import py_SubMesh
+from itertools import chain
 
 
-class InflowFromFlux(Expression):
-    def __init__(self, mesh, boundaries, marker, n, fluxes, degree):
+class InflowFromFlux(object):
+    '''
+    Given a time series of [fluxes] over a surface (a collection of
+    facets[boundaries] with a common marker) with normal [n] we compute
+    a function vector valued function on mesh which has the correct values
+    of the 'velocity'.
+    '''
+    def __init__(self, mesh, boundaries, marker, n, fluxes):
+        # How we talk to the 3d problem
+        # Let us first compute the 'velocity' as foo on the boundary 
         bmesh = BoundaryMesh(mesh, 'exterior')
         c2f = bmesh.entity_map(2)
-
+        # Marker is where we want to integrate, the rest will be killed of
+        # by bcs
         bmesh_subdomains = CellFunction('size_t', bmesh, 0)
+        found_markers = set()
         for cell in cells(bmesh):
-            bmesh_subdomains[cell] = boundaries[c2f[int(cell.index())]]
+            value = boundaries[c2f[int(cell.index())]]
+            found_markers.add(value)
+            bmesh_subdomains[cell] = value 
+        found_markers = list(found_markers)
+        # In parallel different CPUs have different boundaries
+        comm = bmesh.mpi_comm().tompi4py()
+        found_markers = comm.allreduce(found_markers)
+        found_markers = list(set(found_markers))
+        found_markers.remove(marker)
 
-        inlet_mesh = py_SubMesh(bmesh, bmesh_subdomains, marker)
-
-        if hasattr(inlet_mesh, '__iter__'): inlet_mesh = inlet_mesh[0]
-        
-        # plot(inlet_mesh)
-        # interactive()
-
-        # foo = FacetFunction('size_t', inlet_mesh, 0)
-        # DomainBoundary().mark(foo, 1)
-        # xx = inlet_mesh.coordinates().reshape((-1, 3))
-        # for facet in SubsetIterator(foo, 0): print xx[facet.entities(0)]
-
-        V = VectorElement('Lagrange', inlet_mesh.ufl_cell(), 1)
-        Q = FiniteElement('Real', inlet_mesh.ufl_cell(), 0)
+        V = VectorElement('Lagrange', bmesh.ufl_cell(), 1)
+        Q = FiniteElement('Real', bmesh.ufl_cell(), 0)
         W = MixedElement([V, Q])
-        W = FunctionSpace(inlet_mesh, W)
+        W = FunctionSpace(bmesh, W)
 
         u, p = TrialFunctions(W)
         v, q = TestFunctions(W)
 
         f = Constant((0, 0, 0))
-        flux = Constant(0)
+        flux = Constant(1)
 
-        # Normal of the surface - FIXME: CellNormal?
-        a = inner(grad(u), grad(v))*dx + p*inner(v, n)*dx + q*inner(u, n)*dx
-        L = inner(f, v)*dx + inner(-flux, q)*dx
-        bc = DirichletBC(W.sub(0), Constant((0, 0, 0)), 'on_boundary')
+        dx = Measure('dx', domain=bmesh, subdomain_data=bmesh_subdomains)
 
-        assembler = SystemAssembler(a, L, bc)
-        A = Matrix()
-        assembler.assemble(A)
+        a = inner(grad(u), grad(v))*dx(marker)\
+            + p*inner(v, n)*dx(marker)\
+            + q*inner(u, n)*dx(marker)
+        L = inner(f, v)*dx(marker) + inner(-flux, q)*dx(marker)
 
-        # Different flux - only rhs is modified so reuse here
+        # For bc the cell function must be translated into a facet function.
+        # Bc constrained regions get tag 1
+        bmesh.init(2, 1)
+        facet_f = FacetFunction('size_t', bmesh, 0)
+        for c in chain(*[SubsetIterator(bmesh_subdomains, m) for m in found_markers]):
+            for facet in facets(c): facet_f[facet] = 1
+
+        bc = DirichletBC(W.sub(0), Constant((0, 0, 0)), facet_f, 1)
+        # Obtain 'velocity' once than scale it
+        A, b = assemble_system(a, L, bc)
+
+        wh = Function(W)
         solver = LUSolver(A, 'mumps')
-        solver.parameters['reuse_factorization'] = True
-        
-        times, snapshots = [], []
-        b = Vector()
-        for time, flux_value in fluxes:
-            wh = Function(W)
-            flux.assign(flux_value)
+        solver.solve(wh.vector(), b)
 
-            assembler.assemble(b)
-            solver.solve(wh.vector(), b)
+        uh_b, _ = wh.split(deepcopy=True)
+        plot(uh_b, interactive=True)
+        Vb = uh_b.function_space()
+        # We only need the values which are CONSTANT in time
+        array_b = uh_b.vector().get_local()
+        print [v for v in array_b if abs(v) > 1E-10]
 
-            uh, ph = wh.split(deepcopy=True)
-            uh.set_allow_extrapolation(True)
-            
-            times.append(time)
-            snapshots.append(uh)
+        # Now we a way to talk to the world
+        V = VectorFunctionSpace(mesh, 'CG', 1)
+        uh = Function(V)
+        array = uh.vector().get_local()  # Alloc
 
+        # Next we would like to have a mapping for how to update values of uh
+        # based on uh_b based on time dependent flux values
         self._time = 0.
-        self.period = times[-1]
-        self.times = times
-        self.snapshots = snapshots
-        self.t = 0.
+        self.times = fluxes[:, 0]
+        self.fluxes = fluxes[:, 1]
+        self.period = self.times[-1]
+        self.uh = uh
 
-        inlet_mesh.bounding_box_tree()
-        self.comm = inlet_mesh.mpi_comm().tompi4py()
+        # THIS should work in parallel. For now it does not even work in serial
+        # FIXME
+        dofb_vb = np.array(dof_to_vertex_map(Vb), dtype=int)
+        vb_v = np.repeat(np.array(bmesh.entity_map(0), dtype=int), 3)
+        v_dof = np.array(vertex_to_dof_map(V), dtype=int)
+
+        def _update_impl(t, (t0, t1), (q0, q1)):
+            qt = q1*(t-t0)/(t1-t0) + q0*(t-t1)/(t1-t0)
+            print t, qt,
+            array[v_dof[vb_v[dofb_vb]]] = array_b*qt
+            print max(np.abs(array_b*qt)), max(np.abs(array)), '><', id(array), v_dof[vb_v[dofb_vb]],
+            uh.vector().set_local(array)
+            uh.vector().apply('insert')
+            print uh.vector().norm('l2')
+        self._update = _update_impl
+
+        self.t = 0.
 
     @property
     def t(self):
@@ -82,26 +112,15 @@ class InflowFromFlux(Expression):
         while self._time > self.period: self._time -= self.period
 
         times = self.times
+        fluxes = self.fluxes
         # Now find the snapshot indices
         index = [i 
                  for i in range(len(times)-1)
                  if between(self._time, (times[i], times[i+1]))].pop()
-
-        self.index = index
-
-    def eval(self, value, x):
-        t = self.t
-
-        index = self.index
-        uh, Uh = self.snapshots[index], self.snapshots[index+1]
-        uh, Uh = uh(x), Uh(x)
-        ts, Ts = self.times[index], self.times[index+1]   # Snaphost times
-        # Now perform linear interpolation
-        ans = uh*(Ts-t)/(Ts-ts) + Uh*(t-ts)/(Ts-ts)
-        value[:] = ans
-
-    def value_shape(self):
-        return (3, )
+        (t0, t1) = times[index], times[index+1]
+        (q0, q1) = fluxes[index], fluxes[index+1]
+        # Now update the values of f
+        self._update(t, (t0, t1), (q0, q1))
 
 # ----------------------------------------------------------------------------
 
@@ -117,35 +136,19 @@ if __name__ == '__main__':
     boundaries = FacetFunction('size_t', mesh)
     hdf.read(boundaries, '/boundaries')
 
-    plot(boundaries, interactive=True)
+    # plot(boundaries, interactive=True)
 
     fluxes = np.loadtxt('input_data/Vegards01_VolumetricCSFFlow.txt')
     fluxes = fluxes[:, :2]
     fluxes[:, -1] *= -1.
 
-    foo = InflowFromFlux(mesh,
-                         boundaries, marker=1, n=Constant((-1, 0, 0)),
-                         fluxes=fluxes, degree=1)
+    inflow = InflowFromFlux(mesh,
+                            boundaries, marker=1, n=Constant((-1, 0, 0)),
+                            fluxes=fluxes)
+    inflow_f = inflow.uh
 
-    if False:
-        import matplotlib.pyplot as plt
-
-        times = fluxes[:, 0]
-
-        plt.figure()
-        plt.plot(times, fluxes[:, 1])
-
-        times = np.linspace(times[0], times[-1], 30)
-        y = []
-        x =  np.array([0.00000000e+00,  0.786588, -0.14115114])
-        for t in times:
-            foo.t = t
-            y.append(foo(x))
-
-        plt.plot(times, y)
-        plt.show()
-
-    # Use in boundary value problem
+    bmesh = BoundaryMesh(mesh, 'exterior')
+    Vb = VectorFunctionSpace(bmesh, 'CG', 1)
     if True:
         V = VectorFunctionSpace(mesh, 'CG', 1)
         u = TrialFunction(V)
@@ -154,8 +157,9 @@ if __name__ == '__main__':
 
         a = inner(grad(u), grad(v))*dx
         L = inner(zero, v)*dx
-        bc0 = [DirichletBC(V, zero, boundaries, i) for i in (1, 2, 3)]
-        bci = [DirichletBC(V, foo, boundaries, 4)]
+
+        bci = [DirichletBC(V, inflow_f, boundaries, 1)]
+        bc0 = [DirichletBC(V, zero, boundaries, i) for i in (4, 2, 3)]
         bcs = bc0 + bci
 
         assembler = SystemAssembler(a, L, bcs)
@@ -168,13 +172,13 @@ if __name__ == '__main__':
         b = PETScVector()
         uh = Function(V)
         x = uh.vector()
-        for t in np.linspace(0, 2, 41):
-            foo.t = t
+        p = plot(uh)
+        for t in np.linspace(0, 1, 20):
+            inflow.t = t
             assembler.assemble(b)
 
             solver.solve(x, b)
-            
-            plot(uh, title='t = %gs' % t)
+            p.plot(uh)
         interactive()
 
     # FIXME: plot @ point vs. Erika to make sure this is okay

@@ -117,7 +117,9 @@ def process_series_rot(data, diameter, fit, lstsq=False):
 
     assert len(x) == len(chord) == len(canal)
        
-    data = {'x': x, 'z': chord, 'Z': canal}
+    data = {'x': x,
+            'a': chord, 'b': chord,
+            'A': canal, 'B': canal}
 
     return data
 
@@ -216,50 +218,13 @@ if __name__ == '__main__':
     import shutil
 
     # Crossection  circle/ellipse/obstructed
-    cc = 'ellipse'
 
-    if cc == 'circle':
-        data = process_series_rot(data=healthy, diameter='avg', fit='mid', lstsq=False)
-
-        x, z, Z = data['x'], data['z'], data['Z']
-        plt.figure()
-        plt.plot(x, z, marker='x')
-        plt.plot(x, Z, marker='o')
-        plt.show()
-
-        size = [0.5]*len(data['x'])
-        SIZE = [0.6]*len(data['x'])
-        mesh_params = {'size': size, 
-                       'SIZE': SIZE,
-                       'nsplines': 30,
-                       'nsmooth': 5,
-                       'nsmooth_normals': 5}
-
-        tapered_mesh_spline(data=data,
-                            name='demo-%s' % cc,
-                            mesh_params=mesh_params,
-                            nrefs=1)
-
-        mesh = Mesh()
-        h5 = HDF5File(mesh.mpi_comm(), 'HOLLOW-DEMO/hollow-demo_0.h5', 'r')
-        h5.read(mesh, '/mesh', False)
-        facet_f = FacetFunction('size_t', mesh)
-        h5.read(facet_f, '/boundaries')
-        plot(facet_f, interactive=True)
-
-        shutil.rmtree('HOLLOW-DEMO')
-
-    elif cc == 'ellipse':
+    for fit in ('circle', ):
         for kind, data in (('healty', healthy), ('abnormal', abnormal)):
-            data = process_series_ellipse(data=data, fit='mid', lstsq=False)
-
-            x, a, b, A, B = data['x'], data['a'], data['b'], data['A'], data['B']
-            # plt.figure()
-            # plt.plot(x, a, 'rx')
-            # plt.plot(x, b, 'ro')
-            # plt.plot(x, A, 'bx')
-            # plt.plot(x, B, 'bo')
-            # plt.show()
+            if fit == 'ellipse':
+                data = process_series_ellipse(data=data, fit='mid', lstsq=False)
+            elif fit == 'circle':
+                data = process_series_rot(data=healthy, diameter='avg', fit='mid', lstsq=False)
 
             size = [0.2]*len(data['x'])
             SIZE = [0.4]*len(data['x'])
@@ -273,26 +238,3 @@ if __name__ == '__main__':
                                  name=kind,
                                  mesh_params=mesh_params,
                                  nrefs=3)
-            
-            folder = 'HOLLOW-ELLIPSOID-%s' % kind.upper()
-            name = 'hollow-ellipsoid-%s_0.h5' % kind
-
-            mesh = Mesh()
-            h5 = HDF5File(mesh.mpi_comm(), os.path.join(folder, name), 'r')
-            h5.read(mesh, '/mesh', False)
-            facet_f = FacetFunction('size_t', mesh)
-            h5.read(facet_f, '/boundaries')
-
-            from dolfin import BoundaryMesh, XDMFFile, CellFunction, plot, cells
-            bmesh = BoundaryMesh(mesh, 'exterior')
-            c2f = bmesh.entity_map(2)
-
-            cell_f = CellFunction('size_t', bmesh, 0)
-            for cell in cells(bmesh): cell_f[cell] = facet_f[c2f[int(cell.index())]]
-
-            # plot(cell_f, interactive=True)
-
-            out = XDMFFile(mesh.mpi_comm(), '%s.xdmf' % kind)
-            out.write(cell_f, XDMFFile.Encoding_HDF5)
-
-            # shutil.rmtree(folder)

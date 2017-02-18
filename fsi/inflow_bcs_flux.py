@@ -1,6 +1,7 @@
 from dolfin import *
 from boundary_mesh import py_SubMesh
 from itertools import chain
+import numpy as np
 
 
 class InflowFromFlux(object):
@@ -10,9 +11,9 @@ class InflowFromFlux(object):
     a function vector valued function on mesh which has the correct values
     of the 'velocity'.
     '''
-    def __init__(self, mesh, boundaries, marker, n, fluxes, source=''):
+    def __init__(self, mesh, boundaries, marker, n, fluxes, source):
         # Load from file
-        if source: 
+        if isinstance(source, str) and source: 
             V = VectorFunctionSpace(mesh, 'CG', 1)
             uh = Function(V)
 
@@ -23,6 +24,8 @@ class InflowFromFlux(object):
             self.uh = uh
         # Actual computations can for now be done only in serial
         else:
+            assert isinstance(source, tuple)
+            source = source[0]
             assert mesh.mpi_comm().size == 1
 
             bmesh = BoundaryMesh(mesh, 'exterior')
@@ -99,7 +102,7 @@ class InflowFromFlux(object):
             uh.vector().set_local(array)
             uh.vector().apply('insert')
 
-            ofile = HDF5File(mesh.mpi_comm(), 'inflow_%d.h5' % mesh.num_cells(), 'w')
+            ofile = HDF5File(mesh.mpi_comm(), source, 'w')
             ofile.write(uh, 'uh')
             ofile.close()
 
@@ -145,11 +148,15 @@ class InflowFromFlux(object):
 if __name__ == '__main__':
     # Note that Erika has axis oriented towards brain, here it is opposite
     import numpy as np
+    import os
+
+    base = 'hollow-ellipsoid-abnormal'
+    nref = 2
+    mesh_path = os.path.join('..', 'mesh', base.upper(), base+'_%d.h5' % nref)
+    inflow_path = os.path.join('..', 'inflow_profile', base.upper(), base+'_%d.h5' % nref)
 
     mesh = Mesh()
-    hdf = HDF5File(mesh.mpi_comm(),
-                   '../mesh/HOLLOW-ELLIPSOID-HEALTY/hollow-ellipsoid-healty_2.h5',
-                   'r')
+    hdf = HDF5File(mesh.mpi_comm(), mesh_path, 'r')
     hdf.read(mesh, '/mesh', False)
     boundaries = FacetFunction('size_t', mesh)
     hdf.read(boundaries, '/boundaries')
@@ -163,7 +170,7 @@ if __name__ == '__main__':
     inflow = InflowFromFlux(mesh,
                             boundaries, marker=1, n=Constant((-1, 0, 0)),
                             fluxes=fluxes,
-                            source='inflow_72415.h5')
+                            source=(inflow_path, ))
     inflow_f = inflow.uh
 
     bmesh = BoundaryMesh(mesh, 'exterior')
@@ -185,7 +192,7 @@ if __name__ == '__main__':
         A = PETScMatrix();
         assembler.assemble(A)
 
-        solver = PETScKrylovSolver('cg', 'amg')
+        solver = PETScKrylovSolver('cg', 'hypre_amg')
         solver.set_operators(A, A)
         
         b = PETScVector()

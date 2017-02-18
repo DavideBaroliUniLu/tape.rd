@@ -5,26 +5,36 @@ from boundary_mesh import py_BoundaryMesh
 from models.scalar_visco_elasticity import ScalarViscoElastic
 # from models.vector_visco_elasticity import VectorViscoElastic
 # from models.membrane import SolidMembrane
+from inflow_bcs_flux import InflowFromFlux
 from collections import namedtuple
+import numpy as np
 
 
 class CSF(FSIProblem):
     def __init__(self, params=None):
         FSIProblem.__init__(self, params)
-        N = self.params.N
         self.Epsilon = [2, 3]   # FSI
-        self.left = 1
-        self.right = 4
+        self.inflow = 1
+        self.outflow = 4
 
         # Fluid domain setup
         mesh = Mesh()
-        hdf = HDF5File(mesh.mpi_comm(),
-                       '../mesh/HOLLOW-ELLIPSOID-HEALTY/hollow-ellipsoid-healty_%d.h5' % N,
-                       'r')
+        hdf = HDF5File(mesh.mpi_comm(), params['meshFile'], 'r')
         hdf.read(mesh, '/mesh', False)
         boundaries = FacetFunction('size_t', mesh)
         hdf.read(boundaries, '/boundaries')
         self.initialize_geometry(mesh, facet_domains=boundaries)
+
+        # Setup up inflow bcs
+        fluxes = np.loadtxt(params['fluxFile'])
+        fluxes = fluxes[:, :2]
+        fluxes[:, -1] *= -1.
+
+        inflow_foo = InflowFromFlux(mesh,
+                                    boundaries, marker=self.inflow, n=Constant((-1, 0, 0)),
+                                    fluxes=fluxes,
+                                    source=params['inflowFile'])
+        self.inflow_foo = inflow_foo
 
         # Solid domain setup
         bmesh, emap, bmesh_boundaries = py_BoundaryMesh(mesh, boundaries, self.Epsilon, True)
@@ -37,7 +47,7 @@ class CSF(FSIProblem):
         # Forcing
         self.ExternalPressure = Constant(0)
         # Outflow part of the boundary might require special trearment
-        self.outflow_domains = (self.right, )
+        self.outflow_domains = (self.outflow, )
 
     @classmethod
     def default_params(cls):
@@ -54,9 +64,9 @@ class CSF(FSIProblem):
             R=1.45)
 
         params.update(
-            stress_amplitude=2e2,
-            stress_time=5e-3,
-            N=2,
+            meshFile='',
+            inflowFile='',
+            fluxFile='',
             kk=5./6.,    # Specific to membrane
             Q=1)
 
@@ -70,24 +80,19 @@ class CSF(FSIProblem):
 
     def boundary_conditions(self, spaces, u, p, t, controls):
         '''Bcs borrowing outflow on pressure.'''
-        # No equation for velocity in N-S
-        bcu = []    
-        # The flow is pressure driven
-        bcp = [(Expression("time>stress_time ? 0.0 : A*sin(pi*time/stress_time)",
-                           A=self.params.stress_amplitude, time=float(t),
-                           stress_time=self.params.stress_time,
-                           degree=3),
-                self.left)]
+        bcu = [(self.inflow_foo, self.inflow)]    
+
+        bcp = []
         # Here we only specify DirichltBCs for (normal component) of solid
         # displacement, i.e. scalar functions. If not specified the boundary
         # is Neumann
-        bcsolid = [(Constant((0, 0, 0)), self.left),
-                   (Constant((0, 0, 0)), self.right)]
+        bcsolid = [(Constant((0, 0, 0)), self.inflow),
+                   (Constant((0, 0, 0)), self.outflow)]
 
         BcsTuple = namedtuple('BcsTuple', ['u', 'p', 'solid'])
         return BcsTuple(bcu, bcp, bcsolid)
 
     def update(self, spaces, u, p, t, timestep, bcs, *args, **kwargs):
         # The only time-dependent bc in this case is pressure
-        for value, tag in bcs.p:
-            if hasattr(value, 'time'): value.time = float(t)
+        for value, tag in bcs.u:
+            value.time = float(t)

@@ -75,11 +75,11 @@ class SolidMembrane(SolidModelBase):
         u = TrialFunction(V)
         w = TestFunction(V)
         # Solid parameters
-        rho_s = Constant(params.rho_s)  # Dendity
+        rho_s = Constant(params.rho_s)  # Density
         E = Constant(params.E)          # Young
         nu = Constant(params.nu)        # Poisson
         k = Constant(params.kk)         # Constant of traverse shear
-        h_s = Constant(params.h)      # Thickness
+        h_s = Constant(params.h)        # Thickness
 
         u0 = Function(V)
         u0.assign(solution)

@@ -170,44 +170,50 @@ if __name__ == '__main__':
     inflow = InflowFromFlux(mesh,
                             boundaries, marker=1, n=Constant((-1, 0, 0)),
                             fluxes=fluxes,
-                            source=(inflow_path, ))
+                            source=inflow_path)
     inflow_f = inflow.uh
+    p = plot(inflow_f)
 
-    bmesh = BoundaryMesh(mesh, 'exterior')
-    Vb = VectorFunctionSpace(bmesh, 'CG', 1)
-    if True:
-        V = VectorFunctionSpace(mesh, 'CG', 1)
-        u = TrialFunction(V)
-        v = TestFunction(V)
-        zero = Constant((0, 0, 0))
+    for t in np.linspace(0, 1, 1000):
+        inflow.t = t
+        p.plot(inflow_f)
+    interactive()
 
-        a = inner(grad(u), grad(v))*dx
-        L = inner(zero, v)*dx
+    # bmesh = BoundaryMesh(mesh, 'exterior')
+    # Vb = VectorFunctionSpace(bmesh, 'CG', 1)
+    # if True:
+    #     V = VectorFunctionSpace(mesh, 'CG', 1)
+    #     u = TrialFunction(V)
+    #     v = TestFunction(V)
+    #     zero = Constant((0, 0, 0))
 
-        bci = [DirichletBC(V, inflow_f, boundaries, 1)]
-        bc0 = [DirichletBC(V, zero, boundaries, i) for i in (0, 4, 2, 3)]
-        bcs = bc0 + bci
+    #     a = inner(grad(u), grad(v))*dx
+    #     L = inner(zero, v)*dx
 
-        assembler = SystemAssembler(a, L, bcs)
-        A = PETScMatrix();
-        assembler.assemble(A)
+    #     bci = [DirichletBC(V, inflow_f, boundaries, 1)]
+    #     bc0 = [DirichletBC(V, zero, boundaries, i) for i in (0, 4, 2, 3)]
+    #     bcs = bc0 + bci
 
-        solver = PETScKrylovSolver('cg', 'hypre_amg')
-        solver.set_operators(A, A)
-        
-        b = PETScVector()
-        uh = Function(V)
-        x = uh.vector()
-        p = plot(uh)
-        for t in np.linspace(0, 1, 20):
-            inflow.t = t
-            assembler.assemble(b)
+    #     assembler = SystemAssembler(a, L, bcs)
+    #     A = PETScMatrix();
+    #     assembler.assemble(A)
 
-            solver.solve(x, b)
-            p.plot(uh)
-        interactive()
+    #     solver = PETScKrylovSolver('cg', 'hypre_amg')
+    #     solver.set_operators(A, A)
+    #     
+    #     b = PETScVector()
+    #     uh = Function(V)
+    #     x = uh.vector()
+    #     p = plot(uh)
+    #     for t in np.linspace(0, 1, 20):
+    #         inflow.t = t
+    #         assembler.assemble(b)
 
-    # FIXME: plot @ point vs. Erika to make sure this is okay
-    # FIXME: the mesh is okay if master == (rank zero process). Must make it
-    # such that master can be anybody
-    # TODO: use with simulations
+    #         solver.solve(x, b)
+    #         p.plot(uh)
+    #     interactive()
+
+    # # FIXME: plot @ point vs. Erika to make sure this is okay
+    # # FIXME: the mesh is okay if master == (rank zero process). Must make it
+    # # such that master can be anybody
+    # # TODO: use with simulations

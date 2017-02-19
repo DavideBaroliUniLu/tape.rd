@@ -4,7 +4,7 @@ from utils import pressure_transition
 from boundary_mesh import py_BoundaryMesh
 from models.scalar_visco_elasticity import ScalarViscoElastic
 # from models.vector_visco_elasticity import VectorViscoElastic
-# from models.membrane import SolidMembrane
+from models.membrane import SolidMembrane
 from inflow_bcs_flux import InflowFromFlux
 from collections import namedtuple
 import numpy as np
@@ -13,7 +13,7 @@ import numpy as np
 class CSF(FSIProblem):
     def __init__(self, params=None):
         FSIProblem.__init__(self, params)
-        self.Epsilon = [2, 3]   # FSI
+        self.Epsilon = [3]   # FSI
         self.inflow = 1
         self.outflow = 4
 
@@ -38,11 +38,14 @@ class CSF(FSIProblem):
 
         # Solid domain setup
         bmesh, emap, bmesh_boundaries = py_BoundaryMesh(mesh, boundaries, self.Epsilon, True)
+
+        print 'X'
+
         self.bmesh = bmesh
         self.bmesh_boundaries = bmesh_boundaries
         self.emap = emap
         # Which solid model to use
-        self.solid_model = ScalarViscoElastic
+        self.solid_model = SolidMembrane  # ScalarViscoElastic  #
 
         # Forcing
         self.ExternalPressure = Constant(0)
@@ -53,11 +56,11 @@ class CSF(FSIProblem):
     def default_params(cls):
         params = FSIProblem.default_params()
         params.replace(
-            E=0.75*1e6,
+            E=230*1e3,
             h=0.1,
             nu=0.5,
             rho_s=1.1,
-            mu=0.035,
+            mu=0.007,
             rho=1.0,
             T=1.0,
             dt=1e-4,
@@ -80,7 +83,8 @@ class CSF(FSIProblem):
 
     def boundary_conditions(self, spaces, u, p, t, controls):
         '''Bcs borrowing outflow on pressure.'''
-        bcu = [(self.inflow_foo, self.inflow)]    
+        bcu = [(self.inflow_foo.uh, self.inflow),
+               (Constant((0., 0., 0.)), 2)]
 
         bcp = []
         # Here we only specify DirichltBCs for (normal component) of solid
@@ -94,5 +98,4 @@ class CSF(FSIProblem):
 
     def update(self, spaces, u, p, t, timestep, bcs, *args, **kwargs):
         # The only time-dependent bc in this case is pressure
-        for value, tag in bcs.u:
-            value.time = float(t)
+        self.inflow_foo.t = float(t)

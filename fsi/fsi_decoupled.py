@@ -40,6 +40,7 @@ class FSI_Decoupled(NSScheme):
         # Function spaces
         spaces = NSSpacePoolSplit(mesh, self.params.u_degree, self.params.p_degree)
         V = spaces.V
+
         Q = spaces.Q
         D = spaces.spacepool.get_custom_space("CG", 1, (dim,))  # For mesh displ.
         Dgb = VectorFunctionSpace(bmesh, 'CG', 1)                # For solid displ.
@@ -101,8 +102,9 @@ class FSI_Decoupled(NSScheme):
         #####################
         # Make scheme-specific representation of bcs
         bcs = problem.boundary_conditions(spaces, U, P, t, None)
-        bcu = make_velocity_bcs(problem, spaces, (bcs.u, bcs.p))
-        bcp = make_pressure_bcs(problem, spaces, (bcs.u, bcs.p))
+        bcu = [DirichletBC(V, bc_value, problem.facet_domains, bc_tag)
+               for bc_value, bc_tag in bcs.u]
+        bcp = make_pressure_bcs(problem, spaces, (bcs.u, bcs.p))  # Emrpty
         # In our scheme the corrected velocity should satisfy kinematic bc on
         # FSI, i.e. should match the mesh velocity
         if not hasattr(problem.Epsilon, '__iter__'): problem.Epsilon = [problem.Epsilon]
